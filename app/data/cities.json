@@ -1,0 +1,1512 @@
+{
+  "杭州": {
+    "province": "浙江省",
+    "center": {
+      "lat": 30.2741,
+      "lon": 120.1551
+    },
+    "spots": [
+      {
+        "id": "杭州-01",
+        "name": "西湖",
+        "lat": 30.25,
+        "lon": 120.1495,
+        "tags": [
+          "湖景",
+          "经典"
+        ],
+        "description": "杭州代表性湖景，适合沿湖慢行和欣赏城市山水。",
+        "duration_hours": 1.5,
+        "photo_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a9/West_Lake_-_Hangzhou%2C_China.jpg/960px-West_Lake_-_Hangzhou%2C_China.jpg",
+        "photo_credit": "Louisa Salazar / CC BY-SA 3.0 / Wikimedia Commons",
+        "photo_source": "https://commons.wikimedia.org/wiki/File:West_Lake_-_Hangzhou,_China.jpg"
+      },
+      {
+        "id": "杭州-02",
+        "name": "断桥残雪",
+        "lat": 30.26,
+        "lon": 120.1495,
+        "tags": [
+          "湖景",
+          "历史"
+        ],
+        "description": "位于西湖北部，适合结合白堤徒步。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "杭州-03",
+        "name": "雷峰塔",
+        "lat": 30.2311,
+        "lon": 120.1483,
+        "tags": [
+          "历史",
+          "观景"
+        ],
+        "description": "西湖南岸地标，登高可俯瞰湖区。",
+        "duration_hours": 2.0,
+        "photo_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/62/West_Lake_Leifeng_Pagoda.jpg/960px-West_Lake_Leifeng_Pagoda.jpg",
+        "photo_credit": "饮冰室客人 / CC BY-SA 4.0 / Wikimedia Commons",
+        "photo_source": "https://commons.wikimedia.org/wiki/File:West_Lake_Leifeng_Pagoda.jpg"
+      },
+      {
+        "id": "杭州-04",
+        "name": "灵隐寺",
+        "lat": 30.244,
+        "lon": 120.1037,
+        "tags": [
+          "寺庙",
+          "文化"
+        ],
+        "description": "位于西湖西侧山林间的历史佛教寺院。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "杭州-05",
+        "name": "飞来峰",
+        "lat": 30.2435,
+        "lon": 120.101,
+        "tags": [
+          "山水",
+          "文化"
+        ],
+        "description": "以岩壁石刻和山林步道为特色。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "杭州-06",
+        "name": "龙井村",
+        "lat": 30.2081,
+        "lon": 120.1156,
+        "tags": [
+          "茶文化",
+          "自然"
+        ],
+        "description": "以茶园和山间村落风景著称。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "杭州-07",
+        "name": "西溪湿地",
+        "lat": 30.2692,
+        "lon": 120.0698,
+        "tags": [
+          "湿地",
+          "自然"
+        ],
+        "description": "以河网、湿地生态和慢节奏游览为特色。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "杭州-08",
+        "name": "河坊街",
+        "lat": 30.2438,
+        "lon": 120.1744,
+        "tags": [
+          "美食",
+          "文化"
+        ],
+        "description": "老城步行街区，可以体验传统商铺与地方小吃。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "杭州-09",
+        "name": "九溪烟树",
+        "lat": 30.1956,
+        "lon": 120.1177,
+        "tags": [
+          "山水",
+          "徒步"
+        ],
+        "description": "山谷溪流与林荫步道，适合轻徒步。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "杭州-10",
+        "name": "宋城",
+        "lat": 30.1827,
+        "lon": 120.1065,
+        "tags": [
+          "演艺",
+          "文化"
+        ],
+        "description": "以宋文化为主题的旅游演艺区域。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "北京": {
+    "province": "北京市",
+    "center": {
+      "lat": 39.9042,
+      "lon": 116.4074
+    },
+    "spots": [
+      {
+        "id": "北京-01",
+        "name": "故宫博物院",
+        "lat": 39.9163,
+        "lon": 116.3972,
+        "tags": [
+          "历史",
+          "博物馆"
+        ],
+        "description": "明清宫殿建筑群及丰富的文物展览。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "北京-02",
+        "name": "天安门广场",
+        "lat": 39.9054,
+        "lon": 116.3976,
+        "tags": [
+          "地标",
+          "历史"
+        ],
+        "description": "北京中心区域的大型城市广场。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "北京-03",
+        "name": "景山公园",
+        "lat": 39.925,
+        "lon": 116.3967,
+        "tags": [
+          "公园",
+          "观景"
+        ],
+        "description": "登高可眺望北京中轴线及故宫。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "北京-04",
+        "name": "天坛公园",
+        "lat": 39.8822,
+        "lon": 116.4066,
+        "tags": [
+          "历史",
+          "公园"
+        ],
+        "description": "以古代祭天建筑群和园林环境闻名。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "北京-05",
+        "name": "颐和园",
+        "lat": 39.999,
+        "lon": 116.2755,
+        "tags": [
+          "园林",
+          "历史"
+        ],
+        "description": "以昆明湖和万寿山为核心的皇家园林。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "北京-06",
+        "name": "圆明园",
+        "lat": 40.0081,
+        "lon": 116.3033,
+        "tags": [
+          "历史",
+          "园林"
+        ],
+        "description": "历史遗址与园林水景相结合的游览区。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "北京-07",
+        "name": "南锣鼓巷",
+        "lat": 39.9374,
+        "lon": 116.4036,
+        "tags": [
+          "胡同",
+          "美食"
+        ],
+        "description": "传统胡同商业街区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "北京-08",
+        "name": "什刹海",
+        "lat": 39.9376,
+        "lon": 116.3873,
+        "tags": [
+          "湖景",
+          "胡同"
+        ],
+        "description": "可步行体验湖畔和老北京胡同氛围。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "北京-09",
+        "name": "八达岭长城",
+        "lat": 40.3597,
+        "lon": 116.0201,
+        "tags": [
+          "历史",
+          "徒步"
+        ],
+        "description": "长城代表性游览区，距离北京市中心较远。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "上海": {
+    "province": "上海市",
+    "center": {
+      "lat": 31.2304,
+      "lon": 121.4737
+    },
+    "spots": [
+      {
+        "id": "上海-01",
+        "name": "外滩",
+        "lat": 31.2397,
+        "lon": 121.4903,
+        "tags": [
+          "地标",
+          "夜景"
+        ],
+        "description": "黄浦江畔历史建筑群和城市天际线景观。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "上海-02",
+        "name": "豫园",
+        "lat": 31.2271,
+        "lon": 121.4921,
+        "tags": [
+          "园林",
+          "文化"
+        ],
+        "description": "江南古典园林和周边老城商圈。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "上海-03",
+        "name": "东方明珠",
+        "lat": 31.2396,
+        "lon": 121.4998,
+        "tags": [
+          "观景",
+          "地标"
+        ],
+        "description": "陆家嘴标志性电视塔与观景地点。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "上海-04",
+        "name": "南京路步行街",
+        "lat": 31.2361,
+        "lon": 121.475,
+        "tags": [
+          "购物",
+          "城市"
+        ],
+        "description": "商业步行街，适合夜景漫步。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "上海-05",
+        "name": "田子坊",
+        "lat": 31.2107,
+        "lon": 121.4688,
+        "tags": [
+          "街区",
+          "文化"
+        ],
+        "description": "由里弄建筑改造的创意街区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "上海-06",
+        "name": "上海博物馆",
+        "lat": 31.2309,
+        "lon": 121.473,
+        "tags": [
+          "博物馆",
+          "文化"
+        ],
+        "description": "收藏展示中国古代艺术品的博物馆。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "上海-07",
+        "name": "武康路",
+        "lat": 31.2081,
+        "lon": 121.4358,
+        "tags": [
+          "街区",
+          "建筑"
+        ],
+        "description": "具有历史风貌的街道。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "上海-08",
+        "name": "朱家角古镇",
+        "lat": 31.11,
+        "lon": 121.0553,
+        "tags": [
+          "古镇",
+          "历史"
+        ],
+        "description": "水乡古镇，离市中心较远。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "成都": {
+    "province": "四川省",
+    "center": {
+      "lat": 30.5728,
+      "lon": 104.0668
+    },
+    "spots": [
+      {
+        "id": "成都-01",
+        "name": "成都大熊猫繁育研究基地",
+        "lat": 30.7381,
+        "lon": 104.1446,
+        "tags": [
+          "动物",
+          "亲子"
+        ],
+        "description": "观赏大熊猫科普展示的热门场所。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "成都-02",
+        "name": "宽窄巷子",
+        "lat": 30.6731,
+        "lon": 104.053,
+        "tags": [
+          "文化",
+          "街区"
+        ],
+        "description": "由历史街巷构成的文化商业区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "成都-03",
+        "name": "锦里古街",
+        "lat": 30.6442,
+        "lon": 104.049,
+        "tags": [
+          "美食",
+          "古街"
+        ],
+        "description": "成都传统风格街区及地方小吃集中地。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "成都-04",
+        "name": "武侯祠",
+        "lat": 30.6455,
+        "lon": 104.0483,
+        "tags": [
+          "三国",
+          "历史"
+        ],
+        "description": "以三国历史文化为主题的博物馆园区。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "成都-05",
+        "name": "杜甫草堂",
+        "lat": 30.6601,
+        "lon": 104.0286,
+        "tags": [
+          "文学",
+          "园林"
+        ],
+        "description": "纪念诗人杜甫的历史文化景区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "成都-06",
+        "name": "人民公园",
+        "lat": 30.6634,
+        "lon": 104.0627,
+        "tags": [
+          "公园",
+          "茶馆"
+        ],
+        "description": "适合体验成都公园和茶馆文化。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "成都-07",
+        "name": "春熙路",
+        "lat": 30.657,
+        "lon": 104.08,
+        "tags": [
+          "购物",
+          "城市"
+        ],
+        "description": "成都核心商业街区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "成都-08",
+        "name": "青城山",
+        "lat": 30.9011,
+        "lon": 103.5657,
+        "tags": [
+          "山水",
+          "道教"
+        ],
+        "description": "位于都江堰附近的山岳与道教文化景区。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "成都-09",
+        "name": "都江堰",
+        "lat": 31.0008,
+        "lon": 103.6143,
+        "tags": [
+          "水利",
+          "历史"
+        ],
+        "description": "历史悠久的水利工程与景区。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "西安": {
+    "province": "陕西省",
+    "center": {
+      "lat": 34.3416,
+      "lon": 108.9398
+    },
+    "spots": [
+      {
+        "id": "西安-01",
+        "name": "西安城墙",
+        "lat": 34.269,
+        "lon": 108.946,
+        "tags": [
+          "历史",
+          "地标"
+        ],
+        "description": "保存较完整的古城墙，可沿城墙游览。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "西安-02",
+        "name": "钟楼",
+        "lat": 34.2611,
+        "lon": 108.9471,
+        "tags": [
+          "历史",
+          "地标"
+        ],
+        "description": "西安市中心标志性古建筑。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "西安-03",
+        "name": "鼓楼",
+        "lat": 34.262,
+        "lon": 108.9393,
+        "tags": [
+          "历史",
+          "地标"
+        ],
+        "description": "毗邻回民街的城市历史建筑。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "西安-04",
+        "name": "回民街",
+        "lat": 34.2666,
+        "lon": 108.9408,
+        "tags": [
+          "美食",
+          "街区"
+        ],
+        "description": "以特色小吃和城市街巷体验为主。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "西安-05",
+        "name": "大雁塔",
+        "lat": 34.2186,
+        "lon": 108.9643,
+        "tags": [
+          "历史",
+          "文化"
+        ],
+        "description": "唐代佛教建筑与周边文化景观。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "西安-06",
+        "name": "大唐不夜城",
+        "lat": 34.2134,
+        "lon": 108.966,
+        "tags": [
+          "夜景",
+          "文化"
+        ],
+        "description": "唐文化主题步行街区，夜间氛围活跃。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "西安-07",
+        "name": "陕西历史博物馆",
+        "lat": 34.2257,
+        "lon": 108.9563,
+        "tags": [
+          "博物馆",
+          "历史"
+        ],
+        "description": "集中展示陕西地区历史文物。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "西安-08",
+        "name": "秦始皇帝陵博物院",
+        "lat": 34.3839,
+        "lon": 109.2785,
+        "tags": [
+          "历史",
+          "博物馆"
+        ],
+        "description": "兵马俑展馆所在区域，距市中心较远。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "广州": {
+    "province": "广东省",
+    "center": {
+      "lat": 23.1291,
+      "lon": 113.2644
+    },
+    "spots": [
+      {
+        "id": "广州-01",
+        "name": "广州塔",
+        "lat": 23.1086,
+        "lon": 113.3193,
+        "tags": [
+          "地标",
+          "观景"
+        ],
+        "description": "珠江畔城市观景地标。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "广州-02",
+        "name": "沙面岛",
+        "lat": 23.1112,
+        "lon": 113.239,
+        "tags": [
+          "建筑",
+          "街区"
+        ],
+        "description": "保留多种历史风格建筑的江边街区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "广州-03",
+        "name": "陈家祠",
+        "lat": 23.1263,
+        "lon": 113.2475,
+        "tags": [
+          "文化",
+          "建筑"
+        ],
+        "description": "岭南传统建筑与工艺展示场所。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "广州-04",
+        "name": "北京路步行街",
+        "lat": 23.1252,
+        "lon": 113.2678,
+        "tags": [
+          "美食",
+          "购物"
+        ],
+        "description": "广州历史商业街区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "广州-05",
+        "name": "越秀公园",
+        "lat": 23.1415,
+        "lon": 113.2666,
+        "tags": [
+          "公园",
+          "历史"
+        ],
+        "description": "大型城市公园和五羊雕塑所在区域。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "广州-06",
+        "name": "中山纪念堂",
+        "lat": 23.1373,
+        "lon": 113.2636,
+        "tags": [
+          "历史",
+          "建筑"
+        ],
+        "description": "具有纪念意义的城市公共建筑。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "广州-07",
+        "name": "白云山",
+        "lat": 23.1888,
+        "lon": 113.2995,
+        "tags": [
+          "山水",
+          "徒步"
+        ],
+        "description": "城市近郊登山和休闲景区。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "广州-08",
+        "name": "珠江新城",
+        "lat": 23.1194,
+        "lon": 113.3215,
+        "tags": [
+          "城市",
+          "夜景"
+        ],
+        "description": "现代城市建筑与夜景集中区域。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "重庆": {
+    "province": "重庆市",
+    "center": {
+      "lat": 29.563,
+      "lon": 106.5516
+    },
+    "spots": [
+      {
+        "id": "重庆-01",
+        "name": "洪崖洞",
+        "lat": 29.5667,
+        "lon": 106.5784,
+        "tags": [
+          "夜景",
+          "街区"
+        ],
+        "description": "依山而建的山城夜景地标。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "重庆-02",
+        "name": "解放碑",
+        "lat": 29.5606,
+        "lon": 106.577,
+        "tags": [
+          "地标",
+          "购物"
+        ],
+        "description": "重庆核心商圈的标志性建筑。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "重庆-03",
+        "name": "长江索道",
+        "lat": 29.557,
+        "lon": 106.5872,
+        "tags": [
+          "观景",
+          "交通"
+        ],
+        "description": "跨江索道及两岸山城景观体验。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "重庆-04",
+        "name": "磁器口古镇",
+        "lat": 29.5828,
+        "lon": 106.452,
+        "tags": [
+          "古镇",
+          "文化"
+        ],
+        "description": "嘉陵江畔历史街巷景区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "重庆-05",
+        "name": "李子坝观景平台",
+        "lat": 29.5568,
+        "lon": 106.5338,
+        "tags": [
+          "城市",
+          "交通"
+        ],
+        "description": "观赏轨道交通穿楼景观。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "重庆-06",
+        "name": "鹅岭公园",
+        "lat": 29.5526,
+        "lon": 106.531,
+        "tags": [
+          "公园",
+          "观景"
+        ],
+        "description": "登高欣赏江景和山城地形。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "重庆-07",
+        "name": "南山一棵树",
+        "lat": 29.5431,
+        "lon": 106.5987,
+        "tags": [
+          "夜景",
+          "观景"
+        ],
+        "description": "南岸山坡上的城市观景点。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "重庆-08",
+        "name": "三峡博物馆",
+        "lat": 29.5642,
+        "lon": 106.5472,
+        "tags": [
+          "博物馆",
+          "文化"
+        ],
+        "description": "介绍三峡地区自然、人文和历史。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "南京": {
+    "province": "江苏省",
+    "center": {
+      "lat": 32.0603,
+      "lon": 118.7969
+    },
+    "spots": [
+      {
+        "id": "南京-01",
+        "name": "中山陵",
+        "lat": 32.0654,
+        "lon": 118.8486,
+        "tags": [
+          "历史",
+          "文化"
+        ],
+        "description": "位于钟山风景区的纪念性建筑群。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "南京-02",
+        "name": "明孝陵",
+        "lat": 32.0592,
+        "lon": 118.8364,
+        "tags": [
+          "历史",
+          "园林"
+        ],
+        "description": "明代陵寝遗址与林间步道。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "南京-03",
+        "name": "夫子庙",
+        "lat": 32.0193,
+        "lon": 118.787,
+        "tags": [
+          "古街",
+          "文化"
+        ],
+        "description": "秦淮河畔历史文化街区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "南京-04",
+        "name": "秦淮河",
+        "lat": 32.0196,
+        "lon": 118.79,
+        "tags": [
+          "河景",
+          "夜景"
+        ],
+        "description": "城市历史水岸景观。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "南京-05",
+        "name": "玄武湖",
+        "lat": 32.0735,
+        "lon": 118.797,
+        "tags": [
+          "湖景",
+          "公园"
+        ],
+        "description": "市中心附近大型湖泊公园。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "南京-06",
+        "name": "南京博物院",
+        "lat": 32.0439,
+        "lon": 118.8235,
+        "tags": [
+          "博物馆",
+          "历史"
+        ],
+        "description": "南京重要的综合性历史艺术博物馆。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "南京-07",
+        "name": "总统府",
+        "lat": 32.0443,
+        "lon": 118.8063,
+        "tags": [
+          "历史",
+          "建筑"
+        ],
+        "description": "包含近代史相关展陈的历史建筑群。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "南京-08",
+        "name": "老门东",
+        "lat": 32.0036,
+        "lon": 118.7878,
+        "tags": [
+          "古街",
+          "美食"
+        ],
+        "description": "城市历史街区和传统建筑风貌区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "武汉": {
+    "province": "湖北省",
+    "center": {
+      "lat": 30.5928,
+      "lon": 114.3055
+    },
+    "spots": [
+      {
+        "id": "武汉-01",
+        "name": "黄鹤楼",
+        "lat": 30.544,
+        "lon": 114.3025,
+        "tags": [
+          "历史",
+          "观景"
+        ],
+        "description": "长江南岸古典建筑与城市眺望点。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "武汉-02",
+        "name": "东湖",
+        "lat": 30.5658,
+        "lon": 114.3893,
+        "tags": [
+          "湖景",
+          "自然"
+        ],
+        "description": "大型城中湖与绿道区域。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "武汉-03",
+        "name": "湖北省博物馆",
+        "lat": 30.5649,
+        "lon": 114.365,
+        "tags": [
+          "博物馆",
+          "历史"
+        ],
+        "description": "以楚文化文物展陈闻名。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "武汉-04",
+        "name": "武汉大学",
+        "lat": 30.5401,
+        "lon": 114.3614,
+        "tags": [
+          "校园",
+          "建筑"
+        ],
+        "description": "具有历史建筑和自然环境的校园。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "武汉-05",
+        "name": "户部巷",
+        "lat": 30.5459,
+        "lon": 114.295,
+        "tags": [
+          "美食",
+          "街区"
+        ],
+        "description": "传统美食街区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "武汉-06",
+        "name": "江汉路",
+        "lat": 30.5824,
+        "lon": 114.2889,
+        "tags": [
+          "街区",
+          "购物"
+        ],
+        "description": "历史建筑和现代商业结合的步行街。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "武汉-07",
+        "name": "古琴台",
+        "lat": 30.5523,
+        "lon": 114.263,
+        "tags": [
+          "历史",
+          "文化"
+        ],
+        "description": "与知音故事相关的文化景点。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "武汉-08",
+        "name": "汉口江滩",
+        "lat": 30.5926,
+        "lon": 114.3029,
+        "tags": [
+          "江景",
+          "公园"
+        ],
+        "description": "沿江步道及开放公共空间。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "厦门": {
+    "province": "福建省",
+    "center": {
+      "lat": 24.4798,
+      "lon": 118.0894
+    },
+    "spots": [
+      {
+        "id": "厦门-01",
+        "name": "鼓浪屿",
+        "lat": 24.4473,
+        "lon": 118.0674,
+        "tags": [
+          "海岛",
+          "建筑"
+        ],
+        "description": "以近代建筑风貌和海岛步行为特色。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "厦门-02",
+        "name": "厦门大学",
+        "lat": 24.4365,
+        "lon": 118.1025,
+        "tags": [
+          "校园",
+          "建筑"
+        ],
+        "description": "毗邻海岸的高校校园，入校政策需核实。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "厦门-03",
+        "name": "南普陀寺",
+        "lat": 24.4428,
+        "lon": 118.0998,
+        "tags": [
+          "寺庙",
+          "文化"
+        ],
+        "description": "五老峰山麓历史寺庙。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "厦门-04",
+        "name": "曾厝垵",
+        "lat": 24.428,
+        "lon": 118.1152,
+        "tags": [
+          "美食",
+          "街区"
+        ],
+        "description": "近海休闲街巷与小吃聚集区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "厦门-05",
+        "name": "环岛路",
+        "lat": 24.4288,
+        "lon": 118.1432,
+        "tags": [
+          "海滨",
+          "骑行"
+        ],
+        "description": "环海休闲道路和观海步道。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "厦门-06",
+        "name": "胡里山炮台",
+        "lat": 24.4329,
+        "lon": 118.1106,
+        "tags": [
+          "历史",
+          "海滨"
+        ],
+        "description": "海边历史军事遗址。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "厦门-07",
+        "name": "中山路步行街",
+        "lat": 24.4573,
+        "lon": 118.0793,
+        "tags": [
+          "街区",
+          "购物"
+        ],
+        "description": "骑楼建筑与商铺集中地。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "厦门-08",
+        "name": "园林植物园",
+        "lat": 24.4471,
+        "lon": 118.105,
+        "tags": [
+          "植物",
+          "自然"
+        ],
+        "description": "热带亚热带植物景观丰富。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "三亚": {
+    "province": "海南省",
+    "center": {
+      "lat": 18.2528,
+      "lon": 109.5119
+    },
+    "spots": [
+      {
+        "id": "三亚-01",
+        "name": "亚龙湾",
+        "lat": 18.2229,
+        "lon": 109.644,
+        "tags": [
+          "海滨",
+          "度假"
+        ],
+        "description": "沙滩与度假酒店集中的海湾。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "三亚-02",
+        "name": "天涯海角",
+        "lat": 18.2967,
+        "lon": 109.3511,
+        "tags": [
+          "海滨",
+          "地标"
+        ],
+        "description": "海滨礁石及海岸风光景区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "三亚-03",
+        "name": "蜈支洲岛",
+        "lat": 18.3158,
+        "lon": 109.7576,
+        "tags": [
+          "海岛",
+          "海滨"
+        ],
+        "description": "离岸海岛游览，需提前查船班。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "三亚-04",
+        "name": "鹿回头",
+        "lat": 18.2256,
+        "lon": 109.4913,
+        "tags": [
+          "公园",
+          "观景"
+        ],
+        "description": "可以观赏三亚市区及海湾景观。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "三亚-05",
+        "name": "南山文化旅游区",
+        "lat": 18.2945,
+        "lon": 109.2108,
+        "tags": [
+          "文化",
+          "海滨"
+        ],
+        "description": "以文化建筑与海景闻名的景区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "三亚-06",
+        "name": "大东海",
+        "lat": 18.224,
+        "lon": 109.5292,
+        "tags": [
+          "海滨",
+          "度假"
+        ],
+        "description": "靠近市区的热门海滨区域。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "三亚-07",
+        "name": "三亚湾",
+        "lat": 18.2773,
+        "lon": 109.4752,
+        "tags": [
+          "海滨",
+          "夜景"
+        ],
+        "description": "适合傍晚漫步观海的海湾。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "三亚-08",
+        "name": "大小洞天",
+        "lat": 18.3034,
+        "lon": 109.1798,
+        "tags": [
+          "自然",
+          "海滨"
+        ],
+        "description": "海岸礁石和自然山海景观。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  },
+  "桂林": {
+    "province": "广西壮族自治区",
+    "center": {
+      "lat": 25.2742,
+      "lon": 110.29
+    },
+    "spots": [
+      {
+        "id": "桂林-01",
+        "name": "象鼻山",
+        "lat": 25.2643,
+        "lon": 110.2948,
+        "tags": [
+          "山水",
+          "地标"
+        ],
+        "description": "桂林市区著名的山水地标。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "桂林-02",
+        "name": "两江四湖",
+        "lat": 25.2725,
+        "lon": 110.287,
+        "tags": [
+          "水景",
+          "夜景"
+        ],
+        "description": "城市内环湖水系和夜景游览区。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "桂林-03",
+        "name": "七星公园",
+        "lat": 25.272,
+        "lon": 110.3156,
+        "tags": [
+          "山水",
+          "公园"
+        ],
+        "description": "山峰、溶洞与公园相结合。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "桂林-04",
+        "name": "芦笛岩",
+        "lat": 25.3042,
+        "lon": 110.2701,
+        "tags": [
+          "溶洞",
+          "自然"
+        ],
+        "description": "以喀斯特溶洞景观闻名。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "桂林-05",
+        "name": "叠彩山",
+        "lat": 25.2861,
+        "lon": 110.306,
+        "tags": [
+          "山水",
+          "观景"
+        ],
+        "description": "登高俯瞰桂林城区与山峰。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "桂林-06",
+        "name": "独秀峰",
+        "lat": 25.2783,
+        "lon": 110.2998,
+        "tags": [
+          "历史",
+          "山水"
+        ],
+        "description": "市区历史山峰及王城景区。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "桂林-07",
+        "name": "阳朔西街",
+        "lat": 24.777,
+        "lon": 110.4964,
+        "tags": [
+          "古街",
+          "美食"
+        ],
+        "description": "阳朔县热闹的步行商业街。",
+        "duration_hours": 1.5,
+        "photo_url": "",
+        "photo_credit": ""
+      },
+      {
+        "id": "桂林-08",
+        "name": "遇龙河",
+        "lat": 24.7546,
+        "lon": 110.4323,
+        "tags": [
+          "山水",
+          "漂流"
+        ],
+        "description": "阳朔附近以田园山水著称的河流。",
+        "duration_hours": 2.0,
+        "photo_url": "",
+        "photo_credit": ""
+      }
+    ]
+  }
+}

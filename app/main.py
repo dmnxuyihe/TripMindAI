@@ -1,0 +1,341 @@
+"""FastAPI app factory: 前端、对话、行程、算法、缺陷跟踪。"""
+from __future__ import annotations
+import json
+import queue
+import threading
+import time
+from pathlib import Path
+from uuid import uuid4
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select, text
+from .config import Settings
+from .agent import AgentError, run_agent
+from .amap import MapError
+from .dynamic_planning import build_live_plan, benchmark_live
+from .planning import comparison_from_db
+from .models import Attraction, ChatMessage, Conversation, Defect
+from .storage import list_cities, make_engine, setup_database
+
+STATIC = Path(__file__).parent / 'static'
+
+
+class ChatInput(BaseModel):
+    message: str = Field(min_length=1, max_length=2000)
+    conversation_id: str | None = Field(default=None, max_length=36)
+    model: str = Field(default='qwen-plus', max_length=80)
+    clustering: str = 'kmeans'
+    routing: str = 'greedy'
+
+
+class CreateConversation(BaseModel):
+    title: str = Field(default='新对话', min_length=1, max_length=120)
+    model: str = Field(default='qwen-plus', max_length=80)
+
+
+class PlanInput(BaseModel):
+    city: str = Field(min_length=1, max_length=50)
+    origin: str = Field(default='上海', max_length=50)
+    days: int = Field(ge=1, le=7)
+    clustering: str = 'kmeans'
+    routing: str = 'greedy'
+
+
+class DefectInput(BaseModel):
+    title: str = Field(min_length=2, max_length=200)
+    steps: str = Field(min_length=2, max_length=4000)
+    expected: str = Field(min_length=1, max_length=2000)
+    actual: str = Field(min_length=1, max_length=2000)
+    severity: str = 'minor'
+
+
+class DefectUpdate(BaseModel):
+    status: str
+
+
+def iso(dt):
+    return dt.isoformat() if dt else None
+
+
+def dump_message(msg):
+    return {'id': msg.id, 'role': msg.role, 'content': msg.content,
+            'created_at': iso(msg.created_at), 'meta': json.loads(msg.meta_json or '{}')}
+
+
+def dump_conversation(obj):
+    return {'id': obj.id, 'title': obj.title, 'model': obj.model, 'created_at': iso(obj.created_at), 'updated_at': iso(obj.updated_at)}
+
+
+def normalize_choice(value, allowed, label):
+    if value not in allowed:
+        raise HTTPException(status_code=422, detail=f'{label}只支持：{", ".join(allowed)}')
+
+
+def create_app(settings: Settings | None = None, engine=None):
+    settings = settings or Settings()
+    engine = engine or make_engine(settings.database_url)
+    Session = setup_database(engine, initialize=settings.initialize_database)
+    app = FastAPI(title='智行旅途 Agent', version='3.0.0', docs_url='/api/docs', redoc_url=None)
+    app.state.settings = settings
+    app.state.session_factory = Session
+    app.state.engine = engine
+    app.mount('/static', StaticFiles(directory=STATIC), name='static')
+
+    @app.get('/')
+    def home():
+        return FileResponse(STATIC / 'index.html')
+
+    @app.get('/api/health')
+    def health():
+        with Session() as db:
+            db.execute(text('SELECT 1'))
+            count = db.scalar(select(func.count(Attraction.id)))
+        return {'status': 'ok', 'version': '3.0.0', 'database': 'ok', 'attractions': count,
+                'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
+
+    @app.get('/api/models')
+    def models():
+        return {'models': [{'id': name, 'name': f'通义千问 · {name}', 'configured': bool(settings.dashscope_api_key)}
+                           for name in settings.qwen_models],
+                'default': settings.default_model if settings.default_model in settings.allowed_models else settings.qwen_models[0]}
+
+    @app.get('/api/cities')
+    def cities():
+        with Session() as db:
+            return {'cities': list_cities(db)}
+
+    @app.get('/api/attractions')
+    def attractions(city: str = Query(min_length=1, max_length=50)):
+        from .storage import get_spots
+        with Session() as db:
+            return {'city': city, 'spots': get_spots(db, city)}
+
+    @app.post('/api/plan')
+    def plan(payload: PlanInput):
+        normalize_choice(payload.clustering, ('kmeans', 'dbscan'), '聚类算法')
+        normalize_choice(payload.routing, ('greedy', 'dp'), '路径算法')
+        with Session() as db:
+            try:
+                return build_live_plan(db, settings, payload.city.strip(), payload.origin.strip(), payload.days,
+                    clustering=payload.clustering, routing=payload.routing)
+            except (ValueError, MapError) as exc:
+                raise HTTPException(422, str(exc)) from exc
+
+    @app.get('/api/benchmark')
+    def benchmark(city: str = Query(min_length=1, max_length=50), days: int = Query(ge=1, le=7)):
+        with Session() as db:
+            try:
+                return benchmark_live(db, settings, city, days)
+            except (ValueError, MapError) as exc:
+                raise HTTPException(422, str(exc)) from exc
+
+    @app.get('/api/benchmark-fixture')
+    def benchmark_fixture(city: str = Query(min_length=1,max_length=50), days: int = Query(ge=1,le=7)):
+        with Session() as db:
+            try:
+                return {'city':city, 'days':days, 'source':'本地教学测试集（非实时）',
+                    'rows':comparison_from_db(db,city,days),
+                    'note':'教学固定数据，仅用于测试确定性的算法，不提供给真实 AI Agent 作为实时 POI。'}
+            except ValueError as exc:
+                raise HTTPException(422,str(exc)) from exc
+
+    @app.get('/api/conversations')
+    def conversations():
+        with Session() as db:
+            objects = db.scalars(select(Conversation).order_by(Conversation.updated_at.desc()).limit(50)).all()
+            return {'conversations': [dump_conversation(x) for x in objects]}
+
+    @app.post('/api/conversations', status_code=201)
+    def create_conversation(payload: CreateConversation):
+        normalize_choice(payload.model, settings.allowed_models, '模型')
+        obj = Conversation(id=str(uuid4()), title=payload.title.strip() or '新对话', model=payload.model)
+        with Session.begin() as db:
+            db.add(obj)
+        return dump_conversation(obj)
+
+    @app.get('/api/conversations/{conversation_id}')
+    def get_conversation(conversation_id: str):
+        with Session() as db:
+            obj = db.get(Conversation, conversation_id)
+            if obj is None:
+                raise HTTPException(404, '对话不存在')
+            messages = db.scalars(select(ChatMessage).where(ChatMessage.conversation_id == conversation_id).order_by(ChatMessage.created_at, ChatMessage.id)).all()
+            return {**dump_conversation(obj), 'messages': [dump_message(m) for m in messages]}
+
+    @app.delete('/api/conversations/{conversation_id}')
+    def delete_conversation(conversation_id: str):
+        with Session.begin() as db:
+            obj = db.get(Conversation, conversation_id)
+            if obj is None:
+                raise HTTPException(404, '对话不存在')
+            db.delete(obj)
+        return {'deleted': True}
+
+    @app.post('/api/chat')
+    def chat(payload: ChatInput):
+        normalize_choice(payload.model, settings.allowed_models, '模型')
+        message = payload.message.strip()
+        if not message:
+            raise HTTPException(422, '消息不能为空')
+        with Session() as db:
+            old_messages = []
+            existing = None
+            if payload.conversation_id:
+                existing = db.get(Conversation, payload.conversation_id)
+                if existing is None:
+                    raise HTTPException(404, '对话不存在')
+                old_messages = db.scalars(select(ChatMessage).where(ChatMessage.conversation_id == existing.id)
+                    .order_by(ChatMessage.created_at, ChatMessage.id)).all()
+            try:
+                result = run_agent(db, settings, payload.model,
+                    [{'role':m.role, 'content':m.content} for m in old_messages], message)
+            except AgentError as exc:
+                raise HTTPException(503, str(exc)) from exc
+            # Model or tool error must not create a fake answer/history pair.
+            convo = existing or Conversation(id=str(uuid4()), title=message[:36], model=payload.model)
+            if existing is None:
+                db.add(convo)
+            else:
+                convo.model = payload.model
+                from .models import utcnow
+                convo.updated_at = utcnow()
+            db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id, role='user', content=message, meta_json='{}'))
+            db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id, role='assistant', content=result['assistant'],
+                meta_json=json.dumps({'plan':result['plan'], 'tool_trace':result['tool_trace'],
+                    'provider':'dashscope'}, ensure_ascii=False)))
+            db.commit()
+            return {'conversation_id': convo.id, 'model':payload.model, 'provider':'dashscope', **result}
+
+    @app.post('/api/chat/stream')
+    def chat_stream(payload: ChatInput):
+        """Stream visible processing stages and answer chunks as NDJSON.
+
+        Stage messages describe observable work only; private model reasoning is
+        never requested or exposed.
+        """
+        normalize_choice(payload.model, settings.allowed_models, '模型')
+        message = payload.message.strip()
+        if not message:
+            raise HTTPException(422, '消息不能为空')
+
+        def encode(event, **data):
+            return json.dumps({'event': event, **data}, ensure_ascii=False, default=str) + '\n'
+
+        def generate():
+            events = queue.Queue()
+
+            def worker():
+                try:
+                    with Session() as db:
+                        streamed_chars = [0]
+                        def push_delta(text):
+                            streamed_chars[0] += len(text)
+                            events.put({'event':'delta', 'text':text})
+                        old_messages = []
+                        existing = None
+                        if payload.conversation_id:
+                            existing = db.get(Conversation, payload.conversation_id)
+                            if existing is None:
+                                raise ValueError('对话不存在')
+                            old_messages = db.scalars(select(ChatMessage).where(
+                                ChatMessage.conversation_id == existing.id
+                            ).order_by(ChatMessage.created_at, ChatMessage.id)).all()
+                        result = run_agent(db, settings, payload.model,
+                            [{'role':m.role, 'content':m.content} for m in old_messages], message,
+                            progress=lambda text: events.put({'event':'status', 'text':text}),
+                            answer_delta=push_delta)
+                        convo = existing or Conversation(id=str(uuid4()), title=message[:36], model=payload.model)
+                        if existing is None:
+                            db.add(convo)
+                        else:
+                            convo.model = payload.model
+                            from .models import utcnow
+                            convo.updated_at = utcnow()
+                        db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id,
+                            role='user', content=message, meta_json='{}'))
+                        db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id,
+                            role='assistant', content=result['assistant'], meta_json=json.dumps({
+                                'plan':result['plan'], 'tool_trace':result['tool_trace'],
+                                'provider':'dashscope'}, ensure_ascii=False)))
+                        db.commit()
+                        events.put({'event':'result', 'conversation_id':convo.id,
+                                    'streamed':streamed_chars[0] > 0, **result})
+                except (AgentError, ValueError) as exc:
+                    events.put({'event':'error', 'message':str(exc)})
+                except Exception:
+                    events.put({'event':'error', 'message':'服务处理失败，请稍后重试。'})
+                finally:
+                    events.put(None)
+
+            threading.Thread(target=worker, daemon=True).start()
+            yield encode('status', text='正在分析你的问题…')
+            while True:
+                item = events.get()
+                if item is None:
+                    break
+                if item['event'] == 'result':
+                    item.pop('event', None)
+                    answer = item.pop('assistant')
+                    # Preserve Markdown while yielding frequently enough for a
+                    # natural typing effect after the model finishes its tool loop.
+                    if not item.pop('streamed', False):
+                        for start in range(0, len(answer), 12):
+                            yield encode('delta', text=answer[start:start + 12])
+                            time.sleep(0.015)
+                    yield encode('done', **item)
+                else:
+                    yield json.dumps(item, ensure_ascii=False) + '\n'
+
+        return StreamingResponse(generate(), media_type='application/x-ndjson', headers={
+            'Cache-Control':'no-cache, no-transform', 'X-Accel-Buffering':'no'})
+
+    @app.get('/api/defects')
+    def defects():
+        with Session() as db:
+            rows = db.scalars(select(Defect).order_by(Defect.id.desc()).limit(100)).all()
+            return {'defects': [dump_defect(x) for x in rows]}
+
+    @app.post('/api/defects', status_code=201)
+    def add_defect(payload: DefectInput):
+        normalize_choice(payload.severity, ('critical', 'major', 'minor', 'suggestion'), '严重程度')
+        with Session.begin() as db:
+            obj = Defect(title=payload.title.strip(), steps=payload.steps, expected=payload.expected,
+                         actual=payload.actual, severity=payload.severity)
+            db.add(obj)
+            db.flush()
+            output = dump_defect(obj)
+        return output
+
+    @app.patch('/api/defects/{defect_id}')
+    def update_defect(defect_id: int, payload: DefectUpdate):
+        normalize_choice(payload.status, ('open', 'fixed', 'verified', 'wontfix'), '状态')
+        with Session.begin() as db:
+            obj = db.get(Defect, defect_id)
+            if obj is None:
+                raise HTTPException(404, '缺陷不存在')
+            obj.status = payload.status
+            output = dump_defect(obj)
+        return output
+
+    @app.get('/api/quality-summary')
+    def quality_summary():
+        with Session() as db:
+            items = db.scalars(select(Defect)).all()
+            return {'total_defects': len(items), 'by_status': {s: sum(x.status == s for x in items)
+                    for s in ('open', 'fixed', 'verified', 'wontfix')},
+                    'by_severity': {s: sum(x.severity == s for x in items)
+                    for s in ('critical', 'major', 'minor', 'suggestion')},
+                    'warning': '仅根据人工录入的缺陷统计，不代表已完成所有测试或软件质量合格。'}
+
+    return app
+
+
+def dump_defect(obj):
+    return {'id': obj.id, 'title': obj.title, 'steps': obj.steps, 'expected': obj.expected,
+            'actual': obj.actual, 'severity': obj.severity, 'status': obj.status,
+            'created_at': iso(obj.created_at)}
+
+
+app = create_app()  # 使用 .env 中的 DATABASE_URL 连接本地数据库

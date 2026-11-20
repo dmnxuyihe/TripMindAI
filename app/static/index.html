@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <title>TripMind AI · 真正的旅行智能体</title>
+  <link rel="icon" href="/static/logo.png" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261119-4" />
+</head>
+<body>
+<div class="app-shell">
+  <aside id="sidebar" class="sidebar">
+    <div class="brand"><img src="/static/logo.png" alt="智行旅途标志"><div><strong>TripMind AI</strong></div></div>
+    <button id="new-chat" class="new-btn"><span>＋</span> 新建对话</button>
+    <div class="side-label">工作空间</div>
+    <nav class="nav-main" aria-label="功能导航">
+      <button data-tab="chat" class="nav-item selected">◉ <span>AI 对话</span></button>
+      <button data-tab="plan" class="nav-item">⌖ <span>行程规划</span></button>
+      <button data-tab="lab" class="nav-item">⌘ <span>算法实验室</span></button>
+      <button data-tab="defects" class="nav-item">▤ <span>测试与缺陷</span></button>
+    </nav>
+    <div class="side-label history-label">最近对话 <button id="refresh-history" title="刷新对话">↻</button></div>
+    <div id="history" class="history" aria-label="历史对话"></div>
+    <div class="side-footer"><span id="server-dot" class="status-dot"></span><span id="server-status">正在连接本地服务…</span></div>
+  </aside>
+  <div id="overlay" class="overlay" hidden></div>
+  <div class="workspace">
+    <header class="topbar">
+      <div class="top-left"><button id="mobile-menu" class="mobile-menu" aria-label="打开菜单">☰</button><span id="view-heading">AI 对话</span><span class="version-tag">AGENT</span></div>
+      <div class="top-actions"><label for="model-picker">模型</label><select id="model-picker" aria-label="选择大模型"><option value="qwen-plus">qwen-plus</option></select><span id="model-badge" class="model-badge">需 API Key</span></div>
+    </header>
+    <main id="chat-view" class="view chat-view">
+      <div id="chat-scroll" class="chat-scroll">
+        <div id="welcome" class="welcome">
+          <div class="welcome-logo"><img src="/static/logo.png" alt=""></div>
+          <h1>今天想去哪里？</h1>
+          <p>由通义千问理解需求，自主调用高德景点查询与路径优化工具。</p>
+          <div class="suggestions">
+            <button class="suggestion" data-prompt="从上海出发去杭州玩3天，规划行程">🗺️ <span>上海出发 · 杭州3日游</span></button>
+            <button class="suggestion" data-prompt="去成都旅游2天，有什么推荐？">🐼 <span>成都两日游</span></button>
+            <button class="suggestion" data-prompt="从北京去西安玩3天">🏛️ <span>西安文化之旅</span></button>
+            <button class="suggestion" data-prompt="你好，请介绍你的功能">💬 <span>了解智能体能力</span></button>
+          </div>
+        </div>
+        <div id="messages" class="messages" aria-live="polite"></div>
+      </div>
+      <div class="composer-wrap">
+        <form id="chat-form" class="composer">
+          <textarea id="chat-input" rows="2" maxlength="2000" placeholder="给 TripMind AI 发送消息…（Enter 发送，Shift+Enter 换行）" aria-label="聊天内容"></textarea>
+          <div class="composer-actions"><button id="send-button" type="submit" aria-label="发送消息">↑</button></div>
+        </form>
+      </div>
+    </main>
+    <main id="plan-view" class="view panel-view" hidden>
+      <div class="page-container"><div class="page-intro"><span class="eyebrow">TRIP PLANNER</span><h1>行程规划</h1><p>手动使用真实高德景点数据进行算法规划；自然语言需求请到“AI 对话”。</p></div>
+        <form id="plan-form" class="form-card grid-form">
+          <label>出发地<input id="origin" value="上海" maxlength="50" placeholder="例如：北京" /></label>
+          <label>目的地<input id="city-picker" maxlength="50" value="苏州市" placeholder="输入任意中国城市，如苏州市" required></label>
+          <label>旅行天数<input id="days" type="number" min="1" max="7" value="3" required></label>
+          <label>聚类算法<select id="cluster-picker"><option value="kmeans">K-means</option><option value="dbscan">DBSCAN</option></select></label>
+          <label>路径算法<select id="route-picker"><option value="greedy">贪心最近邻</option><option value="dp">动态规划 Held-Karp</option></select></label>
+          <button class="primary-btn" type="submit">生成行程 →</button>
+        </form><div id="plan-result" class="result-wrap"></div>
+      </div>
+    </main>
+    <main id="lab-view" class="view panel-view" hidden>
+      <div class="page-container"><div class="page-intro"><span class="eyebrow">ALGORITHM LAB</span><h1>算法实验室</h1><p>可选择固定教学测试集或真实高德 POI，对比 4 种算法组合；两种数据源严格区分。</p></div>
+        <form id="bench-form" class="form-card row-form"><label>目的地<input id="bench-city" value="杭州" maxlength="50" required></label><label>数据源<select id="bench-source"><option value="fixture">本地教学测试集</option><option value="live">高德实时 POI</option></select></label><label>天数<input id="bench-days" type="number" min="1" max="7" value="3"></label><button class="primary-btn" type="submit">运行对比 →</button></form>
+        <div id="bench-result" class="result-wrap"><div class="empty-card">选择城市后点击运行，查看算法差异。</div></div>
+        <div class="form-card hint-card"><strong>实验说明</strong><p>聚类用于景点分组，路径算法用于组内顺序。动态规划对每组内的开放路径求较短直线距离，但整体分组并不保证全局最优。结果适用于教学对比，不等于真实交通路线。</p></div>
+      </div>
+    </main>
+    <main id="defects-view" class="view panel-view" hidden>
+      <div class="page-container"><div class="page-intro"><span class="eyebrow">TEST MANAGEMENT</span><h1>测试与缺陷</h1><p>登记真实测试发现的问题，更新修复状态，并汇总缺陷数。</p></div>
+        <div id="quality-metrics" class="metrics"></div>
+        <form id="defect-form" class="form-card defect-form"><h2>登记缺陷</h2>
+          <label>缺陷标题<input id="defect-title" required minlength="2" maxlength="200" placeholder="例如：输入0天时未出现提示"></label>
+          <label>复现步骤<textarea id="defect-steps" required minlength="2" placeholder="1. 打开行程规划；2. 输入...；3. 点击..."></textarea></label>
+          <div class="two-col"><label>预期结果<textarea id="defect-expected" required placeholder="应该出现什么"></textarea></label><label>实际结果<textarea id="defect-actual" required placeholder="实际发生了什么"></textarea></label></div>
+          <div class="row-form"><label>严重程度<select id="defect-severity"><option value="minor">一般</option><option value="major">严重</option><option value="critical">致命</option><option value="suggestion">建议</option></select></label><button class="primary-btn" type="submit">保存缺陷</button></div>
+        </form>
+        <div id="defect-list" class="result-wrap"></div>
+      </div>
+    </main>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </div>
+</div>
+<script src="/static/app.js?v=20261119-4" defer></script>
+</body>
+</html>
