@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="light" />
   <title>TripMind AI · 真正的旅行智能体</title>
   <link rel="icon" href="/static/logo.png" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261119-4" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261123-2" />
 </head>
 <body>
 <div class="app-shell">
@@ -31,6 +31,7 @@
       <div class="top-actions"><label for="model-picker">模型</label><select id="model-picker" aria-label="选择大模型"><option value="qwen-plus">qwen-plus</option></select><span id="model-badge" class="model-badge">需 API Key</span></div>
     </header>
     <main id="chat-view" class="view chat-view">
+      <div class="chat-main-column">
       <div id="chat-scroll" class="chat-scroll">
         <div id="welcome" class="welcome">
           <div class="welcome-logo"><img src="/static/logo.png" alt=""></div>
@@ -51,6 +52,14 @@
           <div class="composer-actions"><button id="send-button" type="submit" aria-label="发送消息">↑</button></div>
         </form>
       </div>
+      </div>
+      <aside id="question-outline" class="question-outline" aria-label="当前会话提问目录">
+        <div class="question-outline-head">
+          <div class="question-outline-title">本次对话</div>
+          <button id="question-outline-toggle" class="question-outline-toggle" type="button" aria-label="收起提问目录" aria-expanded="true" title="收起">›</button>
+        </div>
+        <div id="question-outline-list" class="question-outline-list"></div>
+      </aside>
     </main>
     <main id="plan-view" class="view panel-view" hidden>
       <div class="page-container"><div class="page-intro"><span class="eyebrow">TRIP PLANNER</span><h1>行程规划</h1><p>手动使用真实高德景点数据进行算法规划；自然语言需求请到“AI 对话”。</p></div>
@@ -86,6 +95,6 @@
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   </div>
 </div>
-<script src="/static/app.js?v=20261119-4" defer></script>
+<script src="/static/app.js?v=20261123-2" defer></script>
 </body>
 </html>

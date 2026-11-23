@@ -4,19 +4,20 @@ import json
 import queue
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select, text
+from sqlalchemy import case, func, select, text
 from .config import Settings
 from .agent import AgentError, run_agent
 from .amap import MapError
 from .dynamic_planning import build_live_plan, benchmark_live
 from .planning import comparison_from_db
-from .models import Attraction, ChatMessage, Conversation, Defect
+from .models import Attraction, ChatMessage, Conversation, Defect, utcnow
 from .storage import list_cities, make_engine, setup_database
 
 STATIC = Path(__file__).parent / 'static'
@@ -66,6 +67,12 @@ def dump_message(msg):
 
 def dump_conversation(obj):
     return {'id': obj.id, 'title': obj.title, 'model': obj.model, 'created_at': iso(obj.created_at), 'updated_at': iso(obj.updated_at)}
+
+
+def chat_message_order():
+    """稳定保持用户问题在前、助手回答在后，并兼容已有同时间消息。"""
+    role_order = case((ChatMessage.role == 'user', 0), (ChatMessage.role == 'assistant', 1), else_=2)
+    return ChatMessage.created_at, role_order, ChatMessage.id
 
 
 def normalize_choice(value, allowed, label):
@@ -161,7 +168,7 @@ def create_app(settings: Settings | None = None, engine=None):
             obj = db.get(Conversation, conversation_id)
             if obj is None:
                 raise HTTPException(404, '对话不存在')
-            messages = db.scalars(select(ChatMessage).where(ChatMessage.conversation_id == conversation_id).order_by(ChatMessage.created_at, ChatMessage.id)).all()
+            messages = db.scalars(select(ChatMessage).where(ChatMessage.conversation_id == conversation_id).order_by(*chat_message_order())).all()
             return {**dump_conversation(obj), 'messages': [dump_message(m) for m in messages]}
 
     @app.delete('/api/conversations/{conversation_id}')
@@ -187,7 +194,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 if existing is None:
                     raise HTTPException(404, '对话不存在')
                 old_messages = db.scalars(select(ChatMessage).where(ChatMessage.conversation_id == existing.id)
-                    .order_by(ChatMessage.created_at, ChatMessage.id)).all()
+                    .order_by(*chat_message_order())).all()
             try:
                 result = run_agent(db, settings, payload.model,
                     [{'role':m.role, 'content':m.content} for m in old_messages], message)
@@ -199,12 +206,13 @@ def create_app(settings: Settings | None = None, engine=None):
                 db.add(convo)
             else:
                 convo.model = payload.model
-                from .models import utcnow
                 convo.updated_at = utcnow()
-            db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id, role='user', content=message, meta_json='{}'))
+            user_time = utcnow()
+            db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id, role='user', content=message,
+                meta_json='{}', created_at=user_time))
             db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id, role='assistant', content=result['assistant'],
                 meta_json=json.dumps({'plan':result['plan'], 'tool_trace':result['tool_trace'],
-                    'provider':'dashscope'}, ensure_ascii=False)))
+                    'provider':'dashscope'}, ensure_ascii=False), created_at=user_time + timedelta(microseconds=1)))
             db.commit()
             return {'conversation_id': convo.id, 'model':payload.model, 'provider':'dashscope', **result}
 
@@ -241,7 +249,7 @@ def create_app(settings: Settings | None = None, engine=None):
                                 raise ValueError('对话不存在')
                             old_messages = db.scalars(select(ChatMessage).where(
                                 ChatMessage.conversation_id == existing.id
-                            ).order_by(ChatMessage.created_at, ChatMessage.id)).all()
+                            ).order_by(*chat_message_order())).all()
                         result = run_agent(db, settings, payload.model,
                             [{'role':m.role, 'content':m.content} for m in old_messages], message,
                             progress=lambda text: events.put({'event':'status', 'text':text}),
@@ -251,14 +259,15 @@ def create_app(settings: Settings | None = None, engine=None):
                             db.add(convo)
                         else:
                             convo.model = payload.model
-                            from .models import utcnow
                             convo.updated_at = utcnow()
+                        user_time = utcnow()
                         db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id,
-                            role='user', content=message, meta_json='{}'))
+                            role='user', content=message, meta_json='{}', created_at=user_time))
                         db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id,
                             role='assistant', content=result['assistant'], meta_json=json.dumps({
                                 'plan':result['plan'], 'tool_trace':result['tool_trace'],
-                                'provider':'dashscope'}, ensure_ascii=False)))
+                                'provider':'dashscope'}, ensure_ascii=False),
+                            created_at=user_time + timedelta(microseconds=1)))
                         db.commit()
                         events.put({'event':'result', 'conversation_id':convo.id,
                                     'streamed':streamed_chars[0] > 0, **result})
