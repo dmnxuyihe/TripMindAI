@@ -6,6 +6,9 @@ import json
 import math
 from collections import Counter
 from functools import lru_cache
+
+from .itinerary import (DEFAULT_DAY_END as ITINERARY_DAY_END,
+                        DEFAULT_DAY_START as ITINERARY_DAY_START, apply_schedule)
 from pathlib import Path
 
 DATA_PATH = Path(__file__).parent / 'data' / 'cities.json'
@@ -166,7 +169,8 @@ def day_theme(spots):
     return f'{tag} · 精选路线'
 
 
-def make_plan(city, origin, days, clustering='kmeans', routing='dp', external_spots=None, center=None):
+def make_plan(city, origin, days, clustering='kmeans', routing='dp', external_spots=None,
+              center=None, pace=None, day_start=None, day_end=None):
     data=cities_data()
     if not isinstance(city,str) or not city.strip(): raise ValueError('请提供目的地')
     if city in data:
@@ -185,14 +189,28 @@ def make_plan(city, origin, days, clustering='kmeans', routing='dp', external_sp
     if not isinstance(days,int) or isinstance(days,bool) or not 1<=days<=7:
         raise ValueError('天数必须是 1～7 的整数')
     if len(spots)>16: spots=spots[:16]
+    overflow=[]
+    if pace:
+        # 按节奏上限截断：单日点数不会被堆到 DP 的 12 点上限之外，
+        # 多出来的景点交给排程模块列进 unscheduled
+        from .itinerary import PACE_PRESETS
+        preset=PACE_PRESETS.get(pace) or PACE_PRESETS['relaxed']
+        cap=max(1,days*int(preset['max_spots']))
+        if len(spots)>cap:
+            overflow=spots[cap:]
+            spots=spots[:cap]
     day_groups, labels = choose_days(spots,days,clustering)
     itinerary=[]
     for i,group in enumerate(day_groups,1):
         ordered=(greedy_route(group,center) if routing=='greedy' else dp_route(group,center)) if group else []
         itinerary.append({'day':i,'theme':day_theme(ordered),'spots':ordered,'distance_km':round(route_distance(ordered,center),2),'duration_hours':round(sum(s.get('duration_hours',1.5) for s in ordered),1)})
-    return {'city':city,'origin':origin or '未设置','province':province,'days':days,'clustering':clustering,'routing':routing,'data_source':data_source,'daily':itinerary,
+    result = {'city':city,'origin':origin or '未设置','province':province,'days':days,'clustering':clustering,'routing':routing,'data_source':data_source,'daily':itinerary,
             'center':center,'spot_count':sum(len(day['spots']) for day in itinerary),'cluster_count':len({x for x in labels if x!=-1}),'noise_count':sum(x==-1 for x in labels),
             'total_distance_km':round(sum(x['distance_km'] for x in itinerary),2),'distance_note':'直线距离之和用于算法比较；不是公路里程或实际通勤时长。','travel_route':None}
+    if pace:
+        apply_schedule(result, pace, day_start or ITINERARY_DAY_START,
+                       day_end or ITINERARY_DAY_END, extra_unscheduled=overflow)
+    return result
 
 
 def benchmark(city,days,external_spots=None,center=None):

@@ -63,3 +63,13 @@
    与本项目无关，且会被页面的 svg 宽度规则拉伸成大色块，这里统一隐藏。 */
 .leaflet-attribution-flag{display:none!important}
 .route-map svg{max-width:100%}
+
+/* 行程时间轴 */
+.day-timeline{list-style:none;margin:14px 0 0;padding:12px 0 0;border-top:1px dashed #e6ecea;display:flex;flex-direction:column;gap:6px}
+.tl-item{display:flex;gap:12px;align-items:baseline;font-size:13px;color:#4d5a55}
+.tl-time{flex:0 0 104px;color:#8b9691;font-variant-numeric:tabular-nums;font-size:12px}
+.tl-label{flex:1}
+.tl-travel .tl-label{color:#8b9691}
+.tl-meal .tl-label{color:#a3723a}
+.tl-visit .tl-label{font-weight:600;color:#2c3a35}
+.unscheduled-card{border-style:dashed;border-color:#e8d9c4;background:#fffdf8}

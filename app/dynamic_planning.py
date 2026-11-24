@@ -22,7 +22,8 @@ def discover(db, settings, city, keyword='景点', limit=16, *, amap_client=None
     rows = db.scalars(select(PoiCache).where(PoiCache.city == city, PoiCache.keyword == keyword)).all()
     if rows and not refresh:
         recent = all(((now - (r.retrieved_at.replace(tzinfo=timezone.utc) if r.retrieved_at.tzinfo is None else r.retrieved_at)).total_seconds() < settings.poi_cache_hours * 3600) for r in rows)
-        if recent:
+        # 缓存条数少于本次需要的数量时视为未命中，重新取一次（历史上按更小 limit 写过的缓存会由此补全）
+        if recent and len(rows) >= limit:
             return [json.loads(row.data_json) for row in rows[:limit]], 'amap_cache'
     if not settings.amap_api_key:
         raise MapError('缺少 AMAP_WEB_KEY；无法为该目的地获取真实景点（实验室示例数据不会冒充高德结果）。')
@@ -41,7 +42,7 @@ def discover(db, settings, city, keyword='景点', limit=16, *, amap_client=None
 
 
 def build_live_plan(db, settings, city, origin, days, interests='', must_visit=None,
-                    clustering='kmeans', routing='greedy', *, amap_client=None):
+                    clustering='kmeans', routing='greedy', *, pace=None, amap_client=None):
     if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= 7:
         raise ValueError('旅行天数必须是 1～7 天')
     if clustering not in ('kmeans', 'dbscan') or routing not in ('greedy', 'dp'):
@@ -52,7 +53,8 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
     origin = (origin or '未指定')[:50]
     # AMap POI keyword searches; no manual city whitelist.
     keyword = '旅游景点'
-    spots, provenance = discover(db, settings, city, keyword, min(16, max(8, days * 3)), amap_client=amap_client)
+    # 一次取满 16 个候选：多出来的由时间排程决定是否排入，而不是一开始就少取
+    spots, provenance = discover(db, settings, city, keyword, 16, amap_client=amap_client)
     must_visit = [str(p)[:50] for p in (must_visit or [])[:5] if str(p).strip()]
     # Respect explicitly requested landmarks using additional verified POI lookups.
     for name in must_visit:
@@ -66,7 +68,8 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
             pass
     unique = list({p['id']: p for p in spots}.values())[:16]
     center = centroid(unique)
-    result = make_plan(city, origin, days, clustering, routing, external_spots=unique, center=center)
+    result = make_plan(city, origin, days, clustering, routing, external_spots=unique,
+                       center=center, pace=pace)
     result['data_source'] = '高德地图 POI 实时接口' if provenance == 'amap_live' else '高德地图 POI 缓存'
     result['amap_source'] = provenance
     result['preferences'] = (interests or '')[:200]
