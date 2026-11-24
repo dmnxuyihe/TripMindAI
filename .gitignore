@@ -3,11 +3,12 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+tests/.tmp/
+tests/**/__pycache__/
 *.py[cod]
 .coverage
+coverage.xml
 htmlcov/
 *.log
 *.sqlite3
 .DS_Store
-tests/
-scripts/

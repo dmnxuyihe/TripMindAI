@@ -19,10 +19,14 @@ class Settings:
     qwen_models: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip() for x in os.getenv('QWEN_MODELS', 'qwen-plus,qwen-max').split(',') if x.strip()))
     default_model: str = field(default_factory=lambda: os.getenv('DEFAULT_MODEL', 'qwen-plus'))
     model_timeout_seconds: float = field(default_factory=lambda: float(os.getenv('MODEL_TIMEOUT_SECONDS', '45')))
+    agent_max_steps: int = field(default_factory=lambda: int(os.getenv('AGENT_MAX_STEPS', '4')))
+    # 单次对话的总时间预算，防止多轮工具调用叠加成分钟级响应。
+    agent_total_timeout_seconds: float = field(default_factory=lambda: float(os.getenv('AGENT_TOTAL_TIMEOUT_SECONDS', '90')))
     amap_api_key: str = field(default_factory=lambda: os.getenv('AMAP_WEB_KEY', ''))
     amap_timeout_seconds: float = field(default_factory=lambda: float(os.getenv('AMAP_TIMEOUT_SECONDS', '12')))
+    # 跨城距离只是展示性信息，给它单独的时间预算：超时就降级，不拖慢主流程。
+    amap_intercity_budget_seconds: float = field(default_factory=lambda: float(os.getenv('AMAP_INTERCITY_BUDGET_SECONDS', '8')))
     poi_cache_hours: int = field(default_factory=lambda: int(os.getenv('POI_CACHE_HOURS', '72')))
-    agent_max_steps: int = field(default_factory=lambda: int(os.getenv('AGENT_MAX_STEPS', '4')))
 
     @property
     def allowed_models(self):

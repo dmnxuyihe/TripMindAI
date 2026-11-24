@@ -3,6 +3,7 @@ Database's 100 bundled demo spots are never silently substituted for live POIs.
 """
 from __future__ import annotations
 import json
+import time
 from datetime import datetime, timezone
 from hashlib import sha256
 from sqlalchemy import delete, select
@@ -73,18 +74,38 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
         for p in d['spots']:
             p['map_url'] = amap_place_url(p)
     result['intercity_route'] = None
-    # Optional real cross-city road distance; does not change ordering metric.
+    result['intercity_note'] = None
+    # 跨城市道路距离是可选的展示信息，给它独立的时间预算：
+    # 地理编码/驾车接口抖动时不拖慢整个规划请求，超时即降级为“仅直线距离”。
     if origin not in ('未指定', city):
+        budget = max(1.0, settings.amap_intercity_budget_seconds)
+        deadline = time.monotonic() + budget
+        per_call_timeout = max(1.0, min(settings.amap_timeout_seconds, budget))
+
+        def route_timeout():
+            return max(1.0, min(per_call_timeout, deadline - time.monotonic()))
+
         try:
-            start = geocode(origin, key=settings.amap_api_key, timeout=settings.amap_timeout_seconds, client=amap_client)
-            end = geocode(city, key=settings.amap_api_key, timeout=settings.amap_timeout_seconds, client=amap_client)
-            if start and end:
-                route = driving_route(start, end, key=settings.amap_api_key, timeout=settings.amap_timeout_seconds, client=amap_client)
+            start = None
+            end = None
+            if time.monotonic() < deadline:
+                start = geocode(origin, key=settings.amap_api_key,
+                                timeout=route_timeout(), client=amap_client)
+            if start and time.monotonic() < deadline:
+                end = geocode(city, key=settings.amap_api_key,
+                              timeout=route_timeout(), client=amap_client)
+            if start and end and time.monotonic() < deadline:
+                route = driving_route(start, end, key=settings.amap_api_key,
+                                      timeout=route_timeout(), client=amap_client)
                 result['intercity_route'] = {'origin': origin, 'destination': city,
                     'start': {**start, 'name': origin}, 'end': {**end, 'name': city},
                     'straight_km': round(haversine(start, end), 1), **(route or {})}
+            if result['intercity_route'] is None:
+                result['intercity_note'] = (
+                    f'跨城道路数据未在 {budget:g} 秒预算内取得，已省略；'
+                    '页面只展示两地直线距离，不代表驾车里程。')
         except MapError:
-            pass
+            result['intercity_note'] = '跨城道路数据获取失败，已省略；页面只展示直线距离。'
     return result
 
 

@@ -1,16 +1,17 @@
 """FastAPI app factory: 前端、对话、行程、算法、缺陷跟踪。"""
 from __future__ import annotations
 import json
+import os
 import queue
 import threading
 import time
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import case, func, select, text
 from .config import Settings
 from .agent import AgentError, run_agent
@@ -24,19 +25,22 @@ STATIC = Path(__file__).parent / 'static'
 
 
 class ChatInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     message: str = Field(min_length=1, max_length=2000)
     conversation_id: str | None = Field(default=None, max_length=36)
-    model: str = Field(default='qwen-plus', max_length=80)
+    model: str | None = Field(default=None, max_length=80)
     clustering: str = 'kmeans'
     routing: str = 'greedy'
 
 
 class CreateConversation(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     title: str = Field(default='新对话', min_length=1, max_length=120)
-    model: str = Field(default='qwen-plus', max_length=80)
+    model: str | None = Field(default=None, max_length=80)
 
 
 class PlanInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     city: str = Field(min_length=1, max_length=50)
     origin: str = Field(default='上海', max_length=50)
     days: int = Field(ge=1, le=7)
@@ -45,6 +49,7 @@ class PlanInput(BaseModel):
 
 
 class DefectInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     title: str = Field(min_length=2, max_length=200)
     steps: str = Field(min_length=2, max_length=4000)
     expected: str = Field(min_length=1, max_length=2000)
@@ -53,11 +58,22 @@ class DefectInput(BaseModel):
 
 
 class DefectUpdate(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     status: str
 
 
 def iso(dt):
-    return dt.isoformat() if dt else None
+    """统一输出带 UTC 时区的 ISO 8601 时间。
+
+    SQLite 不保存时区，数据库读回的 datetime 是 naive 的；若直接 isoformat()，
+    同一资源在“刚创建时”和“重新读取时”会得到带/不带 +00:00 两种格式。
+    这里统一按 UTC 补全时区再输出，保证接口的时间表示一致。
+    """
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
 
 
 def dump_message(msg):
@@ -84,7 +100,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.0.0', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.0.1', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -99,12 +115,12 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.0.0', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.0.1', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
     @app.get('/api/models')
     def models():
-        return {'models': [{'id': name, 'name': f'通义千问 · {name}', 'configured': bool(settings.dashscope_api_key)}
+        return {'models': [{'id': name, 'name': name, 'configured': bool(settings.dashscope_api_key)}
                            for name in settings.qwen_models],
                 'default': settings.default_model if settings.default_model in settings.allowed_models else settings.qwen_models[0]}
 
@@ -117,7 +133,11 @@ def create_app(settings: Settings | None = None, engine=None):
     def attractions(city: str = Query(min_length=1, max_length=50)):
         from .storage import get_spots
         with Session() as db:
-            return {'city': city, 'spots': get_spots(db, city)}
+            spots = get_spots(db, city)
+        if not spots:
+            return {'city': city, 'spots': [], 'found': False,
+                    'note': f'本地景点库未收录“{city}”；规划与算法对比请通过高德实时接口查询其他城市。'}
+        return {'city': city, 'spots': spots, 'found': True}
 
     @app.post('/api/plan')
     def plan(payload: PlanInput):
@@ -140,13 +160,25 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.get('/api/benchmark-fixture')
     def benchmark_fixture(city: str = Query(min_length=1,max_length=50), days: int = Query(ge=1,le=7)):
+        from .storage import get_spots
         with Session() as db:
+            # 口径与 /api/attractions 保持一致：未收录的城市返回空结果 + 说明，而不是错误码。
+            if not get_spots(db, city):
+                return {'city': city, 'days': days, 'source': '本地教学测试集（非实时）',
+                        'rows': [], 'found': False,
+                        'note': f'本地教学测试集未收录“{city}”；该数据集仅含 12 个城市，用于算法确定性回归。'}
             try:
-                return {'city':city, 'days':days, 'source':'本地教学测试集（非实时）',
+                return {'city':city, 'days':days, 'source':'本地教学测试集（非实时）', 'found': True,
                     'rows':comparison_from_db(db,city,days),
                     'note':'教学固定数据，仅用于测试确定性的算法，不提供给真实 AI Agent 作为实时 POI。'}
             except ValueError as exc:
                 raise HTTPException(422,str(exc)) from exc
+
+    def resolve_model(value):
+        """请求未指定模型时回落到配置的默认模型，避免写死某个厂商的模型名。"""
+        name = (value or '').strip() or settings.default_model
+        normalize_choice(name, settings.allowed_models, '模型')
+        return name
 
     @app.get('/api/conversations')
     def conversations():
@@ -156,8 +188,8 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post('/api/conversations', status_code=201)
     def create_conversation(payload: CreateConversation):
-        normalize_choice(payload.model, settings.allowed_models, '模型')
-        obj = Conversation(id=str(uuid4()), title=payload.title.strip() or '新对话', model=payload.model)
+        model = resolve_model(payload.model)
+        obj = Conversation(id=str(uuid4()), title=payload.title.strip() or '新对话', model=model)
         with Session.begin() as db:
             db.add(obj)
         return dump_conversation(obj)
@@ -182,7 +214,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post('/api/chat')
     def chat(payload: ChatInput):
-        normalize_choice(payload.model, settings.allowed_models, '模型')
+        model = resolve_model(payload.model)
         message = payload.message.strip()
         if not message:
             raise HTTPException(422, '消息不能为空')
@@ -196,25 +228,25 @@ def create_app(settings: Settings | None = None, engine=None):
                 old_messages = db.scalars(select(ChatMessage).where(ChatMessage.conversation_id == existing.id)
                     .order_by(*chat_message_order())).all()
             try:
-                result = run_agent(db, settings, payload.model,
+                result = run_agent(db, settings, model,
                     [{'role':m.role, 'content':m.content} for m in old_messages], message)
             except AgentError as exc:
                 raise HTTPException(503, str(exc)) from exc
             # Model or tool error must not create a fake answer/history pair.
-            convo = existing or Conversation(id=str(uuid4()), title=message[:36], model=payload.model)
+            convo = existing or Conversation(id=str(uuid4()), title=message[:36], model=model)
             if existing is None:
                 db.add(convo)
             else:
-                convo.model = payload.model
+                convo.model = model
                 convo.updated_at = utcnow()
             user_time = utcnow()
             db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id, role='user', content=message,
                 meta_json='{}', created_at=user_time))
             db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id, role='assistant', content=result['assistant'],
                 meta_json=json.dumps({'plan':result['plan'], 'tool_trace':result['tool_trace'],
-                    'provider':'dashscope'}, ensure_ascii=False), created_at=user_time + timedelta(microseconds=1)))
+                    'provider':'openai-compatible', 'context_note':result.get('context_note')}, ensure_ascii=False), created_at=user_time + timedelta(microseconds=1)))
             db.commit()
-            return {'conversation_id': convo.id, 'model':payload.model, 'provider':'dashscope', **result}
+            return {'conversation_id': convo.id, 'model':model, 'provider':'openai-compatible', **result}
 
     @app.post('/api/chat/stream')
     def chat_stream(payload: ChatInput):
@@ -223,7 +255,7 @@ def create_app(settings: Settings | None = None, engine=None):
         Stage messages describe observable work only; private model reasoning is
         never requested or exposed.
         """
-        normalize_choice(payload.model, settings.allowed_models, '模型')
+        model = resolve_model(payload.model)
         message = payload.message.strip()
         if not message:
             raise HTTPException(422, '消息不能为空')
@@ -250,15 +282,15 @@ def create_app(settings: Settings | None = None, engine=None):
                             old_messages = db.scalars(select(ChatMessage).where(
                                 ChatMessage.conversation_id == existing.id
                             ).order_by(*chat_message_order())).all()
-                        result = run_agent(db, settings, payload.model,
+                        result = run_agent(db, settings, model,
                             [{'role':m.role, 'content':m.content} for m in old_messages], message,
                             progress=lambda text: events.put({'event':'status', 'text':text}),
                             answer_delta=push_delta)
-                        convo = existing or Conversation(id=str(uuid4()), title=message[:36], model=payload.model)
+                        convo = existing or Conversation(id=str(uuid4()), title=message[:36], model=model)
                         if existing is None:
                             db.add(convo)
                         else:
-                            convo.model = payload.model
+                            convo.model = model
                             convo.updated_at = utcnow()
                         user_time = utcnow()
                         db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id,
@@ -266,7 +298,7 @@ def create_app(settings: Settings | None = None, engine=None):
                         db.add(ChatMessage(id=str(uuid4()), conversation_id=convo.id,
                             role='assistant', content=result['assistant'], meta_json=json.dumps({
                                 'plan':result['plan'], 'tool_trace':result['tool_trace'],
-                                'provider':'dashscope'}, ensure_ascii=False),
+                                'provider':'openai-compatible', 'context_note':result.get('context_note')}, ensure_ascii=False),
                             created_at=user_time + timedelta(microseconds=1)))
                         db.commit()
                         events.put({'event':'result', 'conversation_id':convo.id,
@@ -347,4 +379,7 @@ def dump_defect(obj):
             'created_at': iso(obj.created_at)}
 
 
-app = create_app()  # 使用 .env 中的 DATABASE_URL 连接本地数据库
+if os.getenv('TRIPMIND_SKIP_DEFAULT_APP', '0') != '1':
+    # 单元/接口测试通过 TRIPMIND_SKIP_DEFAULT_APP=1 关闭模块级实例化，
+    # 改用 create_app(settings, engine) 注入临时数据库，避免测试碰到开发库。
+    app = create_app()  # 使用 .env 中的 DATABASE_URL 连接本地数据库

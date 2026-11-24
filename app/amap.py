@@ -3,10 +3,21 @@
 No synthetic locations are returned when AMap fails. Coordinates are GCJ-02.
 """
 from __future__ import annotations
+import time
 from urllib.parse import urlencode
 import httpx
 
 BASE = 'https://restapi.amap.com'
+
+# 地理编码（地址→坐标）在本机实测为抖动最大的接口（0.4 s ~ 24 s），
+# 而城市坐标在一天内不会变化，因此做进程内 TTL 缓存，避免重复的高延迟调用。
+GEOCODE_CACHE_TTL_SECONDS = 86400
+_GEOCODE_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def clear_geocode_cache():
+    _GEOCODE_CACHE.clear()
+
 
 class MapError(Exception):
     pass
@@ -76,11 +87,19 @@ def search_pois(city: str, *, keyword: str = '景点', limit: int = 16, key: str
     return result
 
 
-def geocode(address: str, *, key: str, timeout=12, client=None):
-    data = _get('/v3/geocode/geo', {'address': address[:120], 'output': 'json'}, key=key, timeout=timeout, client=client)
+def geocode(address: str, *, key: str, timeout=12, client=None, use_cache=True):
+    address = address.strip()[:120]
+    now = time.monotonic()
+    if use_cache:
+        hit = _GEOCODE_CACHE.get(address)
+        if hit and now - hit[0] < GEOCODE_CACHE_TTL_SECONDS:
+            return dict(hit[1])
+    data = _get('/v3/geocode/geo', {'address': address, 'output': 'json'}, key=key, timeout=timeout, client=client)
     for obj in data.get('geocodes') or []:
         loc = parse_location(obj.get('location'))
         if loc:
+            if use_cache:
+                _GEOCODE_CACHE[address] = (now, dict(loc))
             return loc
     return None
 

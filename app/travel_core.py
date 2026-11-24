@@ -4,6 +4,7 @@ Distances below are straight-line haversine kilometres, not road-route distances
 from __future__ import annotations
 import json
 import math
+from collections import Counter
 from functools import lru_cache
 from pathlib import Path
 
@@ -149,6 +150,22 @@ def choose_days(spots, days, clustering='kmeans'):
     return buckets, labels
 
 
+def day_theme(spots):
+    """用当天出现次数最多的 POI 分类作为主题，避免被“当天第一个点”的类别带偏。
+
+    例如某天大部分是风景名胜、第一个点却是商业街，旧实现会得到
+    “购物服务 · 精选路线”，与行程内容不符。
+    """
+    if not spots:
+        return '自由活动'
+    counts = Counter(tag for s in spots for tag in (s.get('tags') or []) if tag)
+    if not counts:
+        return '精选路线'
+    # 次数降序、标签升序，保证同样输入得到同样主题
+    tag = min(counts.items(), key=lambda item: (-item[1], item[0]))[0]
+    return f'{tag} · 精选路线'
+
+
 def make_plan(city, origin, days, clustering='kmeans', routing='dp', external_spots=None, center=None):
     data=cities_data()
     if not isinstance(city,str) or not city.strip(): raise ValueError('请提供目的地')
@@ -172,7 +189,7 @@ def make_plan(city, origin, days, clustering='kmeans', routing='dp', external_sp
     itinerary=[]
     for i,group in enumerate(day_groups,1):
         ordered=(greedy_route(group,center) if routing=='greedy' else dp_route(group,center)) if group else []
-        itinerary.append({'day':i,'theme':(ordered[0]['tags'][0]+' · 精选路线') if ordered else '自由活动','spots':ordered,'distance_km':round(route_distance(ordered,center),2),'duration_hours':round(sum(s.get('duration_hours',1.5) for s in ordered),1)})
+        itinerary.append({'day':i,'theme':day_theme(ordered),'spots':ordered,'distance_km':round(route_distance(ordered,center),2),'duration_hours':round(sum(s.get('duration_hours',1.5) for s in ordered),1)})
     return {'city':city,'origin':origin or '未设置','province':province,'days':days,'clustering':clustering,'routing':routing,'data_source':data_source,'daily':itinerary,
             'center':center,'spot_count':sum(len(day['spots']) for day in itinerary),'cluster_count':len({x for x in labels if x!=-1}),'noise_count':sum(x==-1 for x in labels),
             'total_distance_km':round(sum(x['distance_km'] for x in itinerary),2),'distance_note':'直线距离之和用于算法比较；不是公路里程或实际通勤时长。','travel_route':None}
