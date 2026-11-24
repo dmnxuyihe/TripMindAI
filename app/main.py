@@ -100,7 +100,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.0.1', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.1.0', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -115,14 +115,29 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.0.1', 'database': 'ok', 'attractions': count,
-                'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
+        return {'status': 'ok', 'version': '3.1.0', 'database': 'ok', 'attractions': count,
+                'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
+                'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
     @app.get('/api/models')
     def models():
         return {'models': [{'id': name, 'name': name, 'configured': bool(settings.dashscope_api_key)}
                            for name in settings.qwen_models],
                 'default': settings.default_model if settings.default_model in settings.allowed_models else settings.qwen_models[0]}
+
+    @app.get('/api/map-config')
+    def map_config():
+        """前端地图配置。
+
+        只下发 JS API 的 key（这类 key 本身因域名白名单而可公开），
+        绝不返回 Web 服务 key；未配置时前端回退到开源底图方案。
+        """
+        if settings.amap_js_key:
+            return {'provider': 'amap-js', 'key': settings.amap_js_key,
+                    'security_code': settings.amap_js_security_code,
+                    'note': '高德地图 JS API 2.0'}
+        return {'provider': 'none', 'key': '', 'security_code': '',
+                'note': '未配置 AMAP_JS_KEY，前端使用开源底图回退方案'}
 
     @app.get('/api/cities')
     def cities():

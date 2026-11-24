@@ -23,6 +23,9 @@ class Settings:
     # 单次对话的总时间预算，防止多轮工具调用叠加成分钟级响应。
     agent_total_timeout_seconds: float = field(default_factory=lambda: float(os.getenv('AGENT_TOTAL_TIMEOUT_SECONDS', '90')))
     amap_api_key: str = field(default_factory=lambda: os.getenv('AMAP_WEB_KEY', ''))
+    # 高德 JS API（前端地图）用的 key 与安全密钥，与 Web 服务 key 是两套凭据。
+    amap_js_key: str = field(default_factory=lambda: os.getenv('AMAP_JS_KEY', ''))
+    amap_js_security_code: str = field(default_factory=lambda: os.getenv('AMAP_JS_SECURITY_CODE', ''))
     amap_timeout_seconds: float = field(default_factory=lambda: float(os.getenv('AMAP_TIMEOUT_SECONDS', '12')))
     # 跨城距离只是展示性信息，给它单独的时间预算：超时就降级，不拖慢主流程。
     amap_intercity_budget_seconds: float = field(default_factory=lambda: float(os.getenv('AMAP_INTERCITY_BUDGET_SECONDS', '8')))

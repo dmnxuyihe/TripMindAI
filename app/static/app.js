@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = {tab:'chat', conversationId:null, model:'qwen-plus', models:[], tasks:new Map()};
+const state = {tab:'chat', conversationId:null, model:'qwen-plus', models:[], tasks:new Map(), mapConfig:null};
 const SEVERITIES = {critical:'致命',major:'严重',minor:'一般',suggestion:'建议'};
 const STATUSES = {open:'待处理',fixed:'已修复',verified:'已复测',wontfix:'暂不修复'};
 const TABS = {chat:'AI 对话',plan:'行程规划',lab:'算法实验室',defects:'测试与缺陷'};
@@ -27,6 +27,145 @@ function refreshQuestionOutline(){const list=$('question-outline-list'),outline=
 function setQuestionOutlineCollapsed(collapsed){const outline=$('question-outline'),button=$('question-outline-toggle');outline.classList.toggle('collapsed',collapsed);button.textContent=collapsed?'‹':'›';button.setAttribute('aria-expanded',String(!collapsed));button.setAttribute('aria-label',collapsed?'展开提问目录':'收起提问目录');button.title=collapsed?'展开':'收起';localStorage.setItem('tripmind-question-outline-collapsed',collapsed?'1':'0');}
 function fillAssistant(bubble,text,plan,trace,contextNote){bubble.replaceChildren();renderRichText(bubble,text);if(contextNote)bubble.appendChild(node("div","note",contextNote));if(plan)renderPlan(plan,bubble,true);if(Array.isArray(trace)&&trace.length){const detail=node('details','tool-trace'),summary=node('summary','',`工具调用记录 · ${trace.length} 次`);detail.appendChild(summary);for(const call of trace)detail.appendChild(node('p','note',`${call.status==='ok'?'✓':'!'} ${call.name} · ${call.status}`));bubble.appendChild(detail);}}
 function renderMessage(role,text,plan,trace,contextNote){const row=node('article','message '+role);if(role==='assistant')row.appendChild(node('span','assistant-avatar','旅'));const bubble=node('div','bubble');if(role==='user')bubble.textContent=text;else fillAssistant(bubble,text,plan,trace,contextNote);row.appendChild(bubble);$('messages').appendChild(row);$('welcome').hidden=true;if(role==='user')refreshQuestionOutline();scrollBottom();return row;}
+/* ---------------- 地图：优先高德 JS API，回退 Leaflet ---------------- */
+function coordOf(spot,useWgs){return (useWgs&&spot&&spot.wgs_lat!=null&&spot.wgs_lon!=null)?[spot.wgs_lat,spot.wgs_lon]:[spot.lat,spot.lon];}
+
+function loadAmapSdk(cfg){
+  return new Promise(function(resolve){
+    if(window.AMap)return resolve(true);
+    if(!cfg||!cfg.key)return resolve(false);
+    // 安全密钥必须在脚本加载前注入
+    window._AMapSecurityConfig={securityJsCode:cfg.security_code||''};
+    const s=document.createElement('script');
+    s.src='https://webapi.amap.com/maps?v=2.0&key='+encodeURIComponent(cfg.key);
+    s.onload=function(){resolve(Boolean(window.AMap));};
+    s.onerror=function(){resolve(false);};
+    document.head.appendChild(s);
+  });
+}
+
+let amapConsoleHooked=false;
+function hookAmapErrors(){
+  if(amapConsoleHooked)return;
+  amapConsoleHooked=true;
+  const orig=console.error;
+  console.error=function(){
+    try{
+      const text=Array.prototype.join.call(arguments,' ');
+      if(/INVALID_USER_KEY|INVALID_USER_SCODE|INVALID_USER_DOMAIN|USERKEY/i.test(text)){
+        window.__amapAuthError=String(text).slice(0,180);
+      }
+    }catch(err){}
+    return orig.apply(console,arguments);
+  };
+}
+
+function mapFallbackNote(text){
+  const el=node('div','note',text);
+  el.style.cssText='margin-top:8px;padding:8px 10px;background:#fff8ec;border:1px solid #f0dcc0;border-radius:8px;color:#8a6a3c';
+  return el;
+}
+
+async function loadMapConfig(){
+  try{state.mapConfig=await api('/api/map-config');}catch(err){state.mapConfig={provider:'none'};}
+  if(state.mapConfig&&state.mapConfig.provider==='amap-js')await loadAmapSdk(state.mapConfig);
+}
+
+// 高德 JS API：坐标为 GCJ-02，与后端 lat/lon 完全一致，无需纠偏
+const DAY_COLORS=['#168569','#2f6fd0','#c27b1e','#8a4fd0','#b03a48','#1f8a9c','#6b7a1f'];
+
+function drawAmap(host,days,intercity,onAuthFail){
+  const spots=[].concat.apply([],days);
+  const map=new AMap.Map(host,{zoom:12,viewMode:'2D',resizeEnable:true});
+  const overlays=[];
+  // 每天的线路单独成线，颜色区分，避免跨天连成一条“幽灵路线”
+  days.forEach(function(day,di){
+    if(day.length>1)overlays.push(new AMap.Polyline({
+      path:day.map(function(s){return [s.lon,s.lat];}),
+      strokeColor:DAY_COLORS[di%DAY_COLORS.length],strokeWeight:4,strokeOpacity:0.85,lineJoin:'round'}));
+  });
+  if(intercity&&intercity.start&&intercity.end)overlays.push(new AMap.Polyline({
+    path:[[intercity.start.lon,intercity.start.lat],[intercity.end.lon,intercity.end.lat]],
+    strokeColor:'#9aa8a2',strokeWeight:2,strokeStyle:'dashed'}));
+  spots.forEach(function(s,i){
+    overlays.push(new AMap.Marker({
+      position:[s.lon,s.lat],offset:new AMap.Pixel(-13,-13),zIndex:120+i,title:s.name,
+      content:'<div class="route-pin"><span>'+(i+1)+'</span></div>'}));
+  });
+  map.add(overlays);
+  const focus=overlays.filter(function(o){return o instanceof AMap.Marker;});
+  setTimeout(function(){map.setFitView(focus.length?focus:overlays,false,[40,40,40,40],16);},150);
+  // 高德在 canvas 里画底图；若鉴权被拒，canvas 仍是空白，只能靠控制台错误识别。
+  setTimeout(function(){
+    if(window.__amapAuthError&&typeof onAuthFail==='function'){
+      try{map.destroy();}catch(err){}
+      host.replaceChildren();
+      onAuthFail(window.__amapAuthError);
+    }
+  },3500);
+}
+
+// 开源底图回退：OSM 用纠偏后的 WGS-84，高德栅格用原始 GCJ-02
+function drawLeaflet(host,days,intercity){
+  const spots=[].concat.apply([],days);
+  const map=L.map(host,{scrollWheelZoom:false});
+  const amap=L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{subdomains:'1234',maxZoom:18,attribution:'&copy; 高德地图'});
+  const osm=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'});
+  amap.addTo(map);
+  let useWgs=false;
+  const group=L.layerGroup().addTo(map);
+  function draw(){
+    group.clearLayers();
+    const allPts=spots.map(function(s){return coordOf(s,useWgs);});
+    days.forEach(function(day,di){
+      if(day.length<2)return;
+      L.polyline(day.map(function(s){return coordOf(s,useWgs);}),
+        {color:DAY_COLORS[di%DAY_COLORS.length],weight:4,opacity:0.85,lineJoin:'round'}).addTo(group);
+    });
+    if(intercity&&intercity.start&&intercity.end){
+      L.polyline([coordOf(intercity.start,useWgs),coordOf(intercity.end,useWgs)],
+        {color:'#9aa8a2',weight:2,dashArray:'6 8'}).addTo(group);
+    }
+    spots.forEach(function(s,i){
+      L.marker(allPts[i],{icon:L.divIcon({className:'route-pin',html:'<span>'+(i+1)+'</span>',iconSize:[26,26],iconAnchor:[13,13]})})
+        .bindTooltip((i+1)+'. '+s.name,{direction:'top'}).addTo(group);
+    });
+    if(allPts.length)map.fitBounds(L.latLngBounds(allPts).pad(0.18),{maxZoom:15});
+  }
+  draw();
+  L.control.layers({'高德底图（GCJ-02 原始坐标）':amap,'OSM 底图（已纠偏到 WGS-84）':osm},{},{collapsed:false}).addTo(map);
+  map.on('baselayerchange',function(e){useWgs=/OSM/.test(e.name);draw();});
+  setTimeout(function(){map.invalidateSize();},150);
+}
+
+function buildRouteMap(daysOrSpots,intercity){
+  const days=(Array.isArray(daysOrSpots)&&daysOrSpots.length&&Array.isArray(daysOrSpots[0]))
+    ? daysOrSpots.filter(function(d){return d&&d.length;})
+    : (daysOrSpots&&daysOrSpots.length?[daysOrSpots]:[]);
+  const spots=[].concat.apply([],days);
+  const valid=spots.length>0&&spots.every(function(s){return s&&s.lat!=null&&s.lon!=null;});
+  if(!valid)return routeSvg(spots);
+  const host=node('div','route-map');
+  setTimeout(function(){
+    if(window.AMap&&state.mapConfig&&state.mapConfig.provider==='amap-js'){
+      hookAmapErrors();
+      try{
+        drawAmap(host,days,intercity,function(reason){
+          try{drawLeaflet(host,days,intercity);}catch(err){host.replaceChildren(routeSvg(spots));}
+          const note=mapFallbackNote('高德 JS API 拒绝访问（'+reason+'），已自动切换到回退底图。'
+            +'请检查：① key 的服务平台是否为「Web端(JS API)」；② 域名白名单是否含 127.0.0.1；'
+            +'③ 是否在控制台生成并填写 AMAP_JS_SECURITY_CODE 安全密钥。');
+          const parent=host.parentElement;
+          if(parent&&!parent.querySelector('.map-fallback-note')){note.classList.add('map-fallback-note');parent.appendChild(note);}
+        });
+        return;
+      }catch(err){/* 回落 */}
+    }
+    try{drawLeaflet(host,days,intercity);}catch(err){host.replaceChildren(routeSvg(spots));}
+  },0);
+  return host;
+}
+
 function routeSvg(spots){const W=860,H=260,pad=45;const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('role','img');svg.setAttribute('aria-label','景点经纬度位置和连线示意图');if(!spots.length)return svg;
 const minLat=Math.min(...spots.map(x=>x.lat)),maxLat=Math.max(...spots.map(x=>x.lat));const minLon=Math.min(...spots.map(x=>x.lon)),maxLon=Math.max(...spots.map(x=>x.lon));const dx=Math.max(.02,maxLon-minLon),dy=Math.max(.02,maxLat-minLat);
 const px=s=>pad+((s.lon-minLon)/dx)*(W-2*pad),py=s=>H-pad-((s.lat-minLat)/dy)*(H-2*pad);
@@ -37,8 +176,8 @@ spots.forEach((s,i)=>{shape('circle',{cx:px(s),cy:py(s),r:11,fill:'#fff',stroke:
 function renderPlan(plan,target,compact=false){const wrap=node('section','result-wrap');const summary=node('div','plan-summary');add(summary,node('h2','',`${plan.origin} → ${plan.city} · ${plan.days} 天`),node('p','',`算法：${plan.clustering.toUpperCase()} + ${plan.routing.toUpperCase()} · ${plan.data_source}`));for(const [val,label] of [[plan.spot_count,'景点数'],[plan.total_distance_km+' km','直线距离合计'],[plan.cluster_count,'聚类簇数']]){const s=node('div','stat');add(s,node('strong','',String(val)),node('span','',label));summary.appendChild(s);}wrap.appendChild(summary);
 const all=[];
 for(const day of plan.daily){const card=node('section','day-card');add(card,node('h3','',`第 ${day.day} 天 · ${day.theme}`),node('div','day-meta',`${day.spots.length} 个景点 · 预计游览 ${day.duration_hours} 小时 · 直线连线约 ${day.distance_km} km`));const chips=node('div','spot-list');for(const spot of day.spots){all.push(spot);const b=node('button','spot-pill',spot.name+' ↗');b.type='button';b.addEventListener('click',()=>{const old=card.querySelector('.spot-detail');if(old)old.remove();const detail=node('div','spot-detail');detail.style.cssText='margin-top:13px;padding:13px;background:#f8faf8;border-radius:10px;line-height:1.8';add(detail,node('strong','',spot.name),node('p','',spot.description||'暂无描述'),node('div','note',`建议游览 ${spot.duration_hours} 小时 · ${spot.tags.join(' / ')}`));if(spot.map_url){const a=node('a','meta-link','在高德地图查看 ↗');a.href=spot.map_url;a.target='_blank';a.rel='noopener noreferrer';detail.appendChild(a);}if(spot.photo_url){const img=node('img');img.src=spot.photo_url;img.alt=spot.name;img.loading='lazy';img.style.cssText='max-width:100%;max-height:240px;object-fit:cover;border-radius:10px';img.onerror=()=>img.remove();detail.appendChild(img);if(spot.photo_credit){const source=node('a','meta-link',spot.photo_credit);source.href=spot.photo_source||spot.photo_url;source.target='_blank';source.rel='noopener noreferrer';detail.appendChild(source);}}else detail.appendChild(node('p','note','暂未收录该景点的授权实景照片，可在数据库 photo_url 字段补充。'));card.appendChild(detail);});chips.appendChild(b);}card.appendChild(chips);wrap.appendChild(card);}
-if(plan.intercity_route){const r=plan.intercity_route;const card=node('section','day-card');add(card,node('h3','',`跨城市路线示意 · ${r.origin} → ${r.destination}`),node('div','day-meta',r.driving_distance_km!==undefined?`高德驾车 ${r.driving_distance_km} km · 估计 ${r.driving_duration_min} 分钟（不含实时路况）`:`两地直线距离约 ${r.straight_km} km，非高铁/驾车里程`));const panel=node('div','route-graphic');panel.appendChild(routeSvg([r.start,r.end]));card.appendChild(panel);wrap.appendChild(card);}
-if(all.length){const panel=node('div','route-graphic');panel.appendChild(routeSvg(all));wrap.appendChild(panel);}
+if(plan.intercity_route){const r=plan.intercity_route;const card=node('section','day-card');add(card,node('h3','',`跨城市路线示意 · ${r.origin} → ${r.destination}`),node('div','day-meta',r.driving_distance_km!==undefined?`高德驾车 ${r.driving_distance_km} km · 估计 ${r.driving_duration_min} 分钟（不含实时路况）`:`两地直线距离约 ${r.straight_km} km，非高铁/驾车里程`));const panel=node('div','route-graphic');panel.appendChild(buildRouteMap([r.start,r.end],r));card.appendChild(panel);wrap.appendChild(card);}
+const allDays=(plan.daily||[]).map(function(d){return d.spots||[];});if(all.length){const panel=node('div','route-graphic');panel.appendChild(buildRouteMap(allDays,null));wrap.appendChild(panel);}
 if(!plan.intercity_route&&plan.intercity_note){wrap.appendChild(node('div','note',plan.intercity_note));}wrap.appendChild(node('div','note',plan.map_note||plan.distance_note));if(compact)wrap.style.marginTop='20px';target.appendChild(wrap);
 }
 async function loadModels(){const data=await api('/api/models');state.models=data.models;const sel=$('model-picker');sel.replaceChildren();for(const item of data.models){const opt=node('option','',item.name+(item.configured?'':' · 未配置'));opt.value=item.id;sel.appendChild(opt);}state.model=data.default;sel.value=state.model;updateModelBadge();}
@@ -57,7 +196,7 @@ for(const d of result.defects){const card=node('div','defect-entry');const title
 }catch(err){toast(err.message);}}
 async function submitDefect(e){e.preventDefault();const values={title:$('defect-title').value,steps:$('defect-steps').value,expected:$('defect-expected').value,actual:$('defect-actual').value,severity:$('defect-severity').value};try{await api('/api/defects',{method:'POST',body:JSON.stringify(values)});$('defect-form').reset();toast('缺陷已保存');refreshDefects();}catch(err){toast(err.message);}}
 async function init(){document.querySelectorAll('[data-tab]').forEach(n=>n.addEventListener('click',()=>selectTab(n.dataset.tab)));$('new-chat').addEventListener('click',resetChat);$('refresh-history').addEventListener('click',()=>loadHistory().catch(e=>toast(e.message)));$('model-picker').addEventListener('change',e=>{state.model=e.target.value;updateModelBadge();});$('chat-form').addEventListener('submit',e=>{e.preventDefault();const message=$('chat-input').value.trim();if(!message)return;$('chat-input').value='';sendChat(message);});$('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('chat-form').requestSubmit();}});document.querySelectorAll('[data-prompt]').forEach(btn=>btn.addEventListener('click',()=>{$('chat-input').value=btn.dataset.prompt;$('chat-form').requestSubmit();}));$('plan-form').addEventListener('submit',submitPlan);$('bench-form').addEventListener('submit',submitBench);$('defect-form').addEventListener('submit',submitDefect);$('mobile-menu').addEventListener('click',()=>{$('sidebar').classList.add('mobile-open');$('overlay').hidden=false;});$('overlay').addEventListener('click',closeSidebar);
-try{await Promise.all([loadModels(),loadCities(),loadHistory()]);await api('/api/health');$('server-dot').classList.add('ok');$('server-status').textContent='本地服务正常';}catch(err){$('server-status').textContent='连接失败';toast('初始化失败：'+err.message);}}
+try{await Promise.all([loadModels(),loadCities(),loadHistory(),loadMapConfig()]);await api('/api/health');$('server-dot').classList.add('ok');$('server-status').textContent='本地服务正常';}catch(err){$('server-status').textContent='连接失败';toast('初始化失败：'+err.message);}}
 function initQuestionOutlineToggle(){setQuestionOutlineCollapsed(localStorage.getItem('tripmind-question-outline-collapsed')==='1');$('question-outline-toggle').addEventListener('click',()=>setQuestionOutlineCollapsed(!$('question-outline').classList.contains('collapsed')));}
 window.addEventListener('DOMContentLoaded',initQuestionOutlineToggle);
 window.addEventListener('DOMContentLoaded',init);

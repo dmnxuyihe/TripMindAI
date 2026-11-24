@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from sqlalchemy import delete, select
 from .amap import MapError, amap_place_url, search_pois, geocode, driving_route
+from .geo import add_wgs84_fields
 from .models import PoiCache
 from .travel_core import make_plan, benchmark, centroid, haversine
 
@@ -69,9 +70,11 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
     result['data_source'] = '高德地图 POI 实时接口' if provenance == 'amap_live' else '高德地图 POI 缓存'
     result['amap_source'] = provenance
     result['preferences'] = (interests or '')[:200]
-    result['map_note'] = '景点位置来自高德 GCJ-02 坐标；景点之间为直线距离算法估计，不代表道路导航或实时交通。'
+    result['map_note'] = '景点位置来自高德 GCJ-02 坐标，已在响应中附带 wgs_lat/wgs_lon 供开源底图使用；景点之间为直线距离算法估计，不代表道路导航或实时交通。'
     for d in result['daily']:
         for p in d['spots']:
+            # 同时保留 GCJ-02（lat/lon，用于高德链接）与 WGS-84（wgs_lat/wgs_lon，用于 OSM 底图）
+            add_wgs84_fields(p)
             p['map_url'] = amap_place_url(p)
     result['intercity_route'] = None
     result['intercity_note'] = None
@@ -98,7 +101,8 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
                 route = driving_route(start, end, key=settings.amap_api_key,
                                       timeout=route_timeout(), client=amap_client)
                 result['intercity_route'] = {'origin': origin, 'destination': city,
-                    'start': {**start, 'name': origin}, 'end': {**end, 'name': city},
+                    'start': add_wgs84_fields({**start, 'name': origin}),
+                    'end': add_wgs84_fields({**end, 'name': city}),
                     'straight_km': round(haversine(start, end), 1), **(route or {})}
             if result['intercity_route'] is None:
                 result['intercity_note'] = (
