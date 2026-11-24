@@ -13,14 +13,24 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import case, func, select, text
 from .config import Settings
 from .agent import AgentError, run_agent
 from .amap import MapError, geocode, reverse_geocode
-from .itinerary import DEFAULT_DAY_END, DEFAULT_DAY_START, apply_schedule
+from .itinerary import DEFAULT_DAY_END, DEFAULT_DAY_START, _unscheduled_entry, apply_schedule
 from .legs import prefetch as prefetch_legs
 from .geo import add_wgs84_fields
+
+
+def plan_distance_km(a, b) -> float:
+    """粗略球面距离，用于校验景点是否离行程城市太远。"""
+    import math
+    lat1, lon1, lat2, lon2 = map(math.radians, (float(a['lat']), float(a['lon']),
+                                               float(b['lat']), float(b['lon'])))
+    t = (math.sin((lat2 - lat1) / 2) ** 2
+         + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2)
+    return 6371.0088 * 2 * math.asin(min(1.0, math.sqrt(t)))
 from .dynamic_planning import build_live_plan, benchmark_live
 from .planning import comparison_from_db
 from .models import Attraction, ChatMessage, Conversation, Defect, Itinerary, utcnow
@@ -45,6 +55,13 @@ class CreateConversation(BaseModel):
 
 
 class PlanInput(BaseModel):
+    @field_validator('days', mode='before')
+    @classmethod
+    def _reject_bool_days(cls, value):
+        if isinstance(value, bool):
+            raise ValueError('旅行天数不能是布尔值')
+        return value
+
     model_config = ConfigDict(extra='forbid')
     city: str = Field(min_length=1, max_length=50)
     pace: str = Field(default='relaxed', max_length=16)
@@ -107,6 +124,27 @@ class PlanEditInput(BaseModel):
     spot: dict | None = None
 
 
+def plan_shape_error(plan) -> str | None:
+    """校验前端回传的行程结构，避免脏数据把重排/微调打崩。"""
+    if not isinstance(plan, dict):
+        return '行程数据必须是对象'
+    daily = plan.get('daily')
+    if not isinstance(daily, list) or not daily:
+        return '缺少行程数据'
+    for day in daily:
+        if not isinstance(day, dict):
+            return '行程结构不合法（daily 的元素必须是对象）'
+        if not isinstance(day.get('spots'), list):
+            return '行程结构不合法（每天必须有 spots 列表）'
+        for spot in day['spots']:
+            if not isinstance(spot, dict):
+                return '行程结构不合法（spots 的元素必须是对象）'
+    unscheduled = plan.get('unscheduled')
+    if unscheduled is not None and not isinstance(unscheduled, list):
+        return '行程结构不合法（unscheduled 必须是列表）'
+    return None
+
+
 def iso(dt):
     """统一输出带 UTC 时区的 ISO 8601 时间。
 
@@ -145,7 +183,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.4.4', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.4.5', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -171,7 +209,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.4.4', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.4.5', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -459,6 +497,10 @@ def create_app(settings: Settings | None = None, engine=None):
             return {'legs': [], 'note': '没有需要取轨迹的相邻景点。'}
         if not settings.amap_api_key:
             raise HTTPException(status_code=422, detail='缺少 AMAP_WEB_KEY，无法获取道路轨迹。')
+        for seg in payload.segments:
+            for lon, lat in (seg.start, seg.end):
+                if not (-180 <= lon <= 180) or not (-90 <= lat <= 90):
+                    raise HTTPException(422, '坐标超出范围，无法获取道路轨迹')
         pairs = [({'lon': seg.start[0], 'lat': seg.start[1]},
                   {'lon': seg.end[0], 'lat': seg.end[1]}) for seg in payload.segments]
         fetched = prefetch_legs(pairs, settings=settings,
@@ -480,11 +522,17 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.post('/api/itineraries')
     def save_itinerary(payload: ItineraryInput, response: Response):
         plan = payload.plan or {}
-        daily = plan.get('daily')
-        if not isinstance(daily, list) or not daily:
-            raise HTTPException(422, '没有可保存的行程内容')
-        if not all(isinstance(day, dict) and isinstance(day.get('spots'), list) for day in daily):
-            raise HTTPException(422, '行程结构不合法（daily 必须是含 spots 列表的对象数组）')
+        error = plan_shape_error(plan)
+        if error:
+            raise HTTPException(422, error)
+        daily = plan['daily']
+        raw_days = plan.get('days')
+        try:
+            days_value = int(raw_days) if raw_days is not None else len(daily)
+        except (TypeError, ValueError):
+            raise HTTPException(422, '行程的天数不合法') from None
+        if not 1 <= days_value <= 7:
+            raise HTTPException(422, '行程的天数应在 1–7 之间')
         body = json.dumps(plan, ensure_ascii=False, default=str)
         # 同一份行程重复保存时复用已有记录，避免点几次生成几条分享链接
         with Session() as db:
@@ -495,7 +543,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 return {'id': existing.id, 'url': f'/?trip={existing.id}',
                         'title': existing.title, 'reused': True}
         obj = Itinerary(id=str(uuid4()), title=payload.title.strip() or '我的行程',
-                        city=str(plan.get('city') or '')[:50], days=int(plan.get('days') or len(plan['daily'])),
+                        city=str(plan.get('city') or '')[:50], days=days_value,
                         payload=body)
         with Session.begin() as db:
             db.add(obj)
@@ -530,10 +578,12 @@ def create_app(settings: Settings | None = None, engine=None):
     @app.post('/api/plan/edit')
     def edit_plan(payload: PlanEditInput):
         """微调：把某个景点从某天移除，或把未排入的景点加进某天，然后重新排程。"""
-        plan = dict(payload.plan or {})
-        daily = plan.get('daily') or []
-        if not daily:
-            raise HTTPException(422, '缺少行程数据')
+        plan = payload.plan if isinstance(payload.plan, dict) else {}
+        error = plan_shape_error(plan)
+        if error:
+            raise HTTPException(422, error)
+        plan = dict(plan)
+        daily = plan['daily']
         index = payload.day - 1
         if index < 0 or index >= len(daily):
             raise HTTPException(422, '天数超出范围')
@@ -544,8 +594,10 @@ def create_app(settings: Settings | None = None, engine=None):
             if not target:
                 raise HTTPException(404, '这一天的行程里没有该景点')
             spots = [s for s in spots if str(s.get('id')) != str(payload.spot_id)]
-            plan.setdefault('unscheduled', []).insert(
-                0, {'name': target[0].get('name'), 'reason': '手动移除'})
+            entry = _unscheduled_entry(target[0], '手动移除')
+            if not isinstance(plan.get('unscheduled'), list):
+                plan['unscheduled'] = []
+            plan['unscheduled'].insert(0, entry)
         elif payload.op == 'add':
             spot = dict(payload.spot or {})
             if (spot.get('lat') is None or spot.get('lon') is None) and spot.get('name') and settings.amap_api_key:
@@ -557,8 +609,18 @@ def create_app(settings: Settings | None = None, engine=None):
                     point = None
                 if point:
                     spot.update(point)
-            if spot.get('lat') is None or spot.get('lon') is None:
-                raise HTTPException(422, '景点缺少坐标，无法加入行程（可重新生成一次行程）')
+            try:
+                lat_value = float(spot.get('lat'))
+                lon_value = float(spot.get('lon'))
+            except (TypeError, ValueError):
+                raise HTTPException(422, '景点坐标不合法，无法加入行程') from None
+            spot['lat'], spot['lon'] = lat_value, lon_value
+            if not (-90 <= lat_value <= 90 and -180 <= lon_value <= 180):
+                raise HTTPException(422, '景点坐标超出范围，无法加入行程')
+            center = plan.get('center') or {}
+            if center.get('lat') is not None and center.get('lon') is not None:
+                if plan_distance_km(center, spot) > 150:
+                    raise HTTPException(422, '该景点离行程城市太远，无法加入')
             spots.append(spot)
             plan['unscheduled'] = [u for u in (plan.get('unscheduled') or [])
                                    if u.get('name') != spot.get('name')]
@@ -576,12 +638,32 @@ def create_app(settings: Settings | None = None, engine=None):
     def reschedule_plan(payload: PlanRescheduleInput):
         """微调后一次性重排：按前端提交的每日景点分配重新算时间轴，只调用一次。"""
         plan = dict(payload.plan or {})
-        daily = plan.get('daily')
-        if not isinstance(daily, list) or not daily:
-            raise HTTPException(422, '缺少行程数据')
+        error = plan_shape_error(plan)
+        if error:
+            raise HTTPException(422, error)
+        daily = [dict(day) for day in plan['daily']]
+        # 同一景点只保留第一次出现，跨天/同天重复都合并到 unscheduled
+        seen = set()
+        duplicates = []
         for day in daily:
-            if not isinstance(day, dict) or not isinstance(day.get('spots'), list):
-                raise HTTPException(422, '行程结构不合法（daily 必须是含 spots 列表的对象数组）')
+            kept = []
+            for spot in day['spots']:
+                key = str(spot.get('id') or spot.get('name') or '')
+                if key and key in seen:
+                    duplicates.append(spot)
+                    continue
+                if key:
+                    seen.add(key)
+                kept.append(spot)
+            day['spots'] = kept
+        plan['daily'] = daily
+        if duplicates:
+            plan['unscheduled'] = list(plan.get('unscheduled') or [])
+            for spot in duplicates:
+                entry = _unscheduled_entry(spot, '重复景点已合并')
+                if not any(u.get('name') == entry['name'] for u in plan['unscheduled']):
+                    plan['unscheduled'].append(entry)
+        plan['days'] = len(daily)
         plan = apply_schedule(plan, plan.get('pace') or 'relaxed',
                               plan.get('day_start') or DEFAULT_DAY_START,
                               DEFAULT_DAY_END)

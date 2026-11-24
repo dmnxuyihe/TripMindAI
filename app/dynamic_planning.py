@@ -43,6 +43,15 @@ def discover(db, settings, city, keyword='景点', limit=16, *, amap_client=None
     return points, 'amap_live'
 
 
+def _distance_km(a: dict, b: dict) -> float:
+    import math
+    lat1, lon1, lat2, lon2 = map(math.radians, (float(a['lat']), float(a['lon']),
+                                               float(b['lat']), float(b['lon'])))
+    t = (math.sin((lat2 - lat1) / 2) ** 2
+         + math.cos(lat1) * math.cos(lat2) * math.sin((lon2 - lon1) / 2) ** 2)
+    return 6371.0088 * 2 * math.asin(min(1.0, math.sqrt(t)))
+
+
 def build_live_plan(db, settings, city, origin, days, interests='', must_visit=None,
                     clustering='kmeans', routing='greedy', *, pace=None, spot_ids=None,
                     spot_names=None, day_start=None, lodging=None, lodging_point=None,
@@ -57,8 +66,23 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
     origin = (origin or '未指定')[:50]
     # AMap POI keyword searches; no manual city whitelist.
     keyword = '旅游景点'
+    # 先确认城市存在：高德对无法识别的 region 会回退成全国检索（返回北京景点）
+    city_center = None
+    if settings.amap_api_key:
+        try:
+            city_center = geocode(city, key=settings.amap_api_key,
+                                  timeout=max(1.0, min(5.0, settings.amap_timeout_seconds)),
+                                  client=amap_client)
+        except MapError:
+            city_center = None
+        if not city_center:
+            raise ValueError(f'未找到“{city}”这个城市，请检查目的地名称')
     # 一次取满 16 个候选：多出来的由时间排程决定是否排入，而不是一开始就少取
     spots, provenance = discover(db, settings, city, keyword, 16, amap_client=amap_client)
+    if city_center:
+        spots = [s for s in spots if _distance_km(city_center, s) <= 80]
+        if not spots:
+            raise ValueError(f'“{city}”没有取到可用的景点数据，请换个城市或稍后再试')
     missing_selection = []
     if spot_ids or spot_names:
         by_id = {p['id']: p for p in spots}
@@ -80,11 +104,17 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
                 except MapError:
                     extra = []
                 hit = extra[0] if extra else None
+                # 高德对陌生名称会模糊匹配到别的景点，名字对不上就不要采用
+                if hit is not None:
+                    found = str(hit.get('name') or '')
+                    if name not in found and found not in name:
+                        hit = None
             if hit is not None and hit not in selected:
                 selected.append(hit)
         if selected:
             spots = selected
-            missing_selection = []
+        elif spot_ids or spot_names:
+            raise ValueError('所选景点在当前城市找不到（可能已下线或候选已刷新），请重新获取候选景点')
     must_visit = [str(p)[:50] for p in (must_visit or [])[:5] if str(p).strip()]
     # Respect explicitly requested landmarks using additional verified POI lookups.
     for name in must_visit:
@@ -107,6 +137,9 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
             overflow = unique[cap:]
             unique = unique[:cap]
     result = make_plan(city, origin, days, clustering, routing, external_spots=unique, center=center)
+    if missing_selection:
+        result['selection_note'] = (f'有 {len(missing_selection)} 个所选景点本次没有找到，'
+                                    '其余景点已按你的选择排程。')
     result['data_source'] = '高德地图 POI 实时接口' if provenance == 'amap_live' else '高德地图 POI 缓存'
     result['amap_source'] = provenance
     result['preferences'] = (interests or '')[:200]

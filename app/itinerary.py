@@ -78,8 +78,15 @@ def visit_hours(spot: dict) -> float:
 
 
 def _usable(spot) -> bool:
-    """景点至少要能定位，否则无法参与排程。"""
-    return isinstance(spot, dict) and spot.get('lat') is not None and spot.get('lon') is not None
+    """景点要能定位：lat/lon 必须能转成数字，否则不参与排程。"""
+    if not isinstance(spot, dict):
+        return False
+    try:
+        float(spot.get('lat'))
+        float(spot.get('lon'))
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def travel_minutes(a: dict | None, b: dict) -> tuple[int, str]:
@@ -164,7 +171,7 @@ def _plan_day(spots, start, end, budget_minutes, max_spots, center=None, travel_
         if not _usable(spot):
             invalid.append(spot if isinstance(spot, dict) else {'name': '数据不完整的景点'})
             continue
-        if not spot.get('name'):
+        if not isinstance(spot.get('name'), str) or not spot['name'].strip():
             spot['name'] = '未命名景点'
         if len(placed) >= max_spots:
             leftover = spots[index:]
@@ -177,6 +184,7 @@ def _plan_day(spots, start, end, budget_minutes, max_spots, center=None, travel_
         warning = ''
         open_min, close_min, hours_source = window_of(spot)
         wait = 0
+        arrive_open = arrive          # 交通到达时刻（wait 从这里开始，避免与 travel 重叠）
         if arrive < open_min:
             wait = open_min - arrive
             arrive = open_min
@@ -197,17 +205,19 @@ def _plan_day(spots, start, end, budget_minutes, max_spots, center=None, travel_
             cursor = lunch_at + LUNCH_MINUTES
             lunch_done = True
             arrive = cursor + leg
+            arrive_open = arrive
+            wait = 0
 
         if arrive + duration > end or (arrive + duration - start) > budget_minutes:
             leftover = spots[index:]
             break
 
         if leg:
-            timeline.append({'kind': 'travel', 'start': _fmt(cursor), 'end': _fmt(arrive),
+            timeline.append({'kind': 'travel', 'start': _fmt(cursor), 'end': _fmt(arrive_open),
                              'label': f'{mode}前往 {spot["name"]}', 'minutes': leg, 'mode': mode})
             travel_total += leg
         if wait:
-            timeline.append({'kind': 'wait', 'start': _fmt(arrive - wait), 'end': _fmt(arrive),
+            timeline.append({'kind': 'wait', 'start': _fmt(arrive_open), 'end': _fmt(arrive),
                              'label': f'等待 {spot["name"]} 开门', 'minutes': wait})
         timeline.append({'kind': 'visit', 'start': _fmt(arrive), 'end': _fmt(arrive + duration),
                          'label': spot['name'], 'minutes': duration, 'hours': round(duration / 60, 1),
@@ -334,14 +344,14 @@ def apply_schedule(plan: dict, pace: str = DEFAULT_PACE,
     plan['daily_max_spots'] = max_spots
     plan['spot_count'] = total_scheduled
     plan['total_distance_km'] = round(sum(d.get('distance_km') or 0 for d in plan.get('daily') or []), 2)
-    scheduled_names = {s.get('name') for day in plan.get('daily') or []
-                       for s in (day.get('spots') or [])}
-    overflow_names = {s.get('name') for s in leftovers}
+    scheduled_names = {str(s.get('name') or '') for day in plan.get('daily') or []
+                       for s in (day.get('spots') or []) if isinstance(s, dict)}
+    overflow_names = {str(s.get('name') or '') for s in leftovers if isinstance(s, dict)}
     # 合并调用方已有的未排入条目（例如手动移除的景点），避免重新排程时被整体覆盖
     manual = [u for u in (plan.get('unscheduled') or [])
               if isinstance(u, dict) and u.get('name')
-              and u['name'] not in scheduled_names
-              and u['name'] not in overflow_names]
+              and str(u['name']) not in scheduled_names
+              and str(u['name']) not in overflow_names]
     plan['unscheduled'] = ([_unscheduled_entry(s, '超出每日时间预算') for s in leftovers]
                            + manual)
     plan['capacity'] = {

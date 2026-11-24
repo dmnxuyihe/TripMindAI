@@ -81,7 +81,7 @@ def test_save_itinerary_with_empty_plan_returns_422(client):
     response = client.post('/api/itineraries', json={'plan': {}})
 
     assert response.status_code == 422
-    assert response.json()['detail'] == '没有可保存的行程内容'
+    assert '行程数据' in response.json()['detail']
 
 
 def test_save_itinerary_without_daily_returns_422(client):
@@ -218,7 +218,7 @@ def test_plan_edit_add_requires_coordinates(client):
                                  'spot': {'id': 'S9', 'name': '没有坐标的景点'}})
 
     assert response.status_code == 422
-    assert '景点缺少坐标' in response.json()['detail']
+    assert ('坐标' in response.json()['detail'])
 
 
 def test_plan_edit_unknown_op_returns_422(client, two_spot_plan):
