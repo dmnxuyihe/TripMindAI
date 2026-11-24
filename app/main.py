@@ -117,7 +117,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.3.2', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.3.3', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -132,7 +132,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.3.2', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.3.3', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -402,7 +402,7 @@ def create_app(settings: Settings | None = None, engine=None):
 
         budget = max(2.0, settings.amap_legs_budget_seconds)
         # 单段限时压到 4 秒：高德偶发 10~20 秒的卡顿直接放弃，用直线兜底
-        per_call = max(1.2, min(2.5, settings.amap_timeout_seconds))
+        per_call = max(1.5, min(3.0, settings.amap_timeout_seconds))
         results = [None] * len(segments)
 
         def cache_key(seg):
@@ -451,6 +451,23 @@ def create_app(settings: Settings | None = None, engine=None):
             finally:
                 # 不等卡住的请求：超时的那几段直接按直线处理
                 pool.shutdown(wait=False, cancel_futures=True)
+
+            # 第二轮：对仍然缺失的段在剩余预算内再试一次（缩容并发，避免又拖满）
+            retry = [i for i, route in enumerate(results) if not (route and route.get('path'))]
+            if retry and time.monotonic() < deadline + budget:
+                pool2 = ThreadPoolExecutor(max_workers=min(3, len(retry)))
+                futures2 = {pool2.submit(fetch, i): i for i in retry}
+                try:
+                    for future in as_completed(futures2, timeout=max(1.5, budget / 2)):
+                        index = futures2[future]
+                        try:
+                            results[index] = future.result()
+                        except Exception:
+                            pass
+                except TimeoutError:
+                    pass
+                finally:
+                    pool2.shutdown(wait=False, cancel_futures=True)
 
         legs = []
         for index, route in enumerate(results):

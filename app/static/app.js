@@ -113,7 +113,8 @@ function drawAmap(host,days,intercity,onAuthFail){
     const color=DAY_COLORS[di%DAY_COLORS.length];
     dayPaths(day).forEach(function(seg){
       const line=new AMap.Polyline({path:seg.path,strokeColor:color,
-        strokeWeight:seg.road?5:4,strokeOpacity:seg.road?0.9:0.6,lineJoin:'round'});
+        strokeWeight:seg.road?5:3,strokeOpacity:seg.road?0.9:0.5,lineJoin:'round',
+        strokeStyle:seg.road?'solid':'dashed'});
       dayLines[di].push(line); all.push(line);
     });
     (day.spots||[]).forEach(function(s){
@@ -190,7 +191,7 @@ function drawLeaflet(host,days,intercity){
         });
       }else if(spots.length>1){
         dayLines[di].push(L.polyline(spots.map(function(s){return coordOf(s,useWgs);}),
-          {color:color,weight:4,opacity:0.6,lineJoin:'round'}).addTo(map));
+          {color:color,weight:3,opacity:0.5,dashArray:'6 8',lineJoin:'round'}).addTo(map));
       }
       spots.forEach(function(s){
         seq+=1;
@@ -250,6 +251,10 @@ function drawLeaflet(host,days,intercity){
   setTimeout(function(){map.invalidateSize();},150);
 }
 
+function dayHasRoad(day){
+  return Array.isArray(day&&day.legs)&&day.legs.some(function(l){return l&&Array.isArray(l.path)&&l.path.length>1;});
+}
+
 function buildRouteMap(input,intercity){
   const days=normalizeDays(input);
   const spots=[].concat.apply([],days.map(function(d){return d.spots;}));
@@ -292,6 +297,14 @@ function buildDailyMapPanel(panel,days){
     dot.style.background=value==null?'#9aa8a2':DAY_COLORS[value%DAY_COLORS.length];
     btn.appendChild(dot);
     btn.appendChild(node('span','map-day-label',label));
+    if(value!=null){
+      const day=days[value];
+      if(day&&(day.spots||[]).length>1&&!dayHasRoad(day)){
+        const badge=node('span','map-day-badge','直线');
+        badge.title='这一天的路线未取得高德道路轨迹，按直线估算';
+        btn.appendChild(badge);
+      }
+    }
     btn.appendChild(node('span','map-day-count',String(count)));
     btn.addEventListener('click',function(){
       sidebar.querySelectorAll('.map-day-item').forEach(function(b){b.classList.remove('selected');});

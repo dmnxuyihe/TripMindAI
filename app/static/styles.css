@@ -104,3 +104,5 @@
 .map-day-count{color:#9aa6a0;font-size:11px}
 .map-with-days .route-map{flex:1;min-width:0}
 @media(max-width:820px){.map-with-days{flex-direction:column}.map-day-list{flex:0 0 auto;flex-direction:row;flex-wrap:wrap}.map-day-item{width:auto}}
+
+.map-day-badge{font-size:10px;color:#a3723a;background:#fff5e6;border:1px solid #f0dcc0;border-radius:5px;padding:1px 4px}
