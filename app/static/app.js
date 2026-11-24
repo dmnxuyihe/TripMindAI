@@ -438,12 +438,17 @@ function addSpotLocal(spot){
 }
 
 async function commitEdit(){
-  if(!editState.count){toast('还没有调整内容');return;}
+  if(editState.committing)return;
+  if(!editState.count||!editState.draft){toast('还没有调整内容');return;}
+  editState.committing=true;
+  const draft=editState.draft;
+  const commitButton=document.querySelector('.edit-commit');
+  if(commitButton){commitButton.disabled=true;commitButton.textContent='正在重新规划…';}
   const target=state.planTarget||$('plan-result');
   try{
     const data=await api('/api/plan/reschedule',{method:'POST',
-      body:JSON.stringify({plan:editState.draft}),timeout:90000});
-    const wanted=(editState.draft.daily||[]).reduce(function(n,d){return n+(d.spots||[]).length;},0);
+      body:JSON.stringify({plan:draft}),timeout:90000});
+    const wanted=(draft.daily||[]).reduce(function(n,d){return n+(d.spots||[]).length;},0);
     const got=(data.daily||[]).reduce(function(n,d){return n+(d.spots||[]).length;},0);
     editState.active=false;editState.draft=null;editState.count=0;
     state.currentPlan=data;
@@ -452,7 +457,11 @@ async function commitEdit(){
     toast(wanted>got
       ? ('已重新规划：有 '+(wanted-got)+' 个景点时间装不下，已放回「待安排」')
       : '已按你的调整重新规划路线');
-  }catch(err){toast('重新规划失败：'+err.message);}
+  }catch(err){
+    if(commitButton){commitButton.disabled=false;commitButton.textContent='重新规划路线';}
+    toast('重新规划失败：'+err.message);
+  }
+  finally{editState.committing=false;}
 }
 
 function renderCurrentPlan(){
@@ -550,6 +559,7 @@ async function confirmLodgingPick(){
   toast('住宿地已设为：'+coordText+'（正在获取地址名）');
   try{
     const data=await api('/api/geocode/reverse?lon='+lodgingPick.lon+'&lat='+lodgingPick.lat);
+    if(!data.name&&data.note){toast('未能获取地址名（'+data.note+'），已使用坐标');}
     if(data.name&&document.getElementById('lodging').value===coordText){
       document.getElementById('lodging').value=data.name;
       toast('已回填地址：'+data.name);
@@ -608,6 +618,7 @@ async function editPlan(payload){
   if(!target){toast('找不到行程区域，请重新生成一次');return;}
   try{
     const data=await api('/api/plan/edit',{method:'POST',body:JSON.stringify({plan:plan,...payload})});
+    state.currentPlan=data;
     target.replaceChildren();
     renderPlan(data,target);
   }catch(err){toast('调整失败：'+err.message);}
@@ -616,6 +627,7 @@ async function editPlan(payload){
 async function loadSharedTrip(id){
   try{
     const data=await api('/api/itineraries/'+encodeURIComponent(id));
+    state.currentPlan=data.plan;state.planSeq=(state.planSeq||0)+1;
     selectTab('plan');
     const target=$('plan-result');
     target.replaceChildren();
@@ -625,7 +637,6 @@ async function loadSharedTrip(id){
 }
 
 function renderPlan(plan,target,compact=false){const wrap=node('section','result-wrap');const pendingMaps=[];const summary=node('div','plan-summary');add(summary,node('h2','',`${plan.origin} → ${plan.city} · ${plan.days} 天`),node('p','',`算法：${plan.clustering.toUpperCase()} + ${plan.routing.toUpperCase()}`+(plan.pace_label?` · ${plan.pace_label}节奏`:'')+` · ${plan.data_source}`));for(const [val,label] of [[plan.spot_count,'景点数'],[plan.total_distance_km+' km','直线距离合计'],[plan.cluster_count,'聚类簇数']]){const s=node('div','stat');add(s,node('strong','',String(val)),node('span','',label));summary.appendChild(s);}
-state.currentPlan=plan;
 state.planTarget=target;
 const actions=node('div','plan-actions');
 if(!editState.active){
@@ -688,10 +699,14 @@ async function loadPoiCandidates(){
   try{
     const data=await api('/api/pois?city='+encodeURIComponent(city));
     poiState.city=city;
+    const keep=new Set();
+    (data.spots||[]).forEach(function(s){if(poiState.selected.has(s.id))keep.add(s.id);});
+    const dropped=poiState.selected.size-keep.size;
     poiState.spots=data.spots||[];
-    poiState.selected=new Set();
+    poiState.selected=keep;
     renderPoiOptions();
     updatePoiCount(data.source==='amap_cache'?'（缓存）':'');
+    if(dropped>0)toast('候选已刷新：有 '+dropped+' 个已选景点不在新候选里，已自动取消');
   }catch(err){
     poiState.spots=[];poiState.selected=new Set();renderPoiOptions();
     status.textContent=err.message;
@@ -733,10 +748,10 @@ function syncStyleControls(){
   const custom=style==='custom';
   ['cluster-picker','route-picker'].forEach(function(id){const el=$(id);if(el)el.disabled=!custom;});
 }
-async function submitPlan(e){e.preventDefault();const target=$('plan-result');target.replaceChildren(node('div','empty-card','正在规划…'));const algo=resolveRouteStyle();try{const data=await api('/api/plan',{method:'POST',body:JSON.stringify({city:$('city-picker').value,origin:$('origin').value,days:Number($('days').value),clustering:algo.clustering,routing:algo.routing,pace:$('pace-picker')?$('pace-picker').value:'relaxed',day_start:($('day-start')&&$('day-start').value)?$('day-start').value:'09:00',
+async function submitPlan(e){e.preventDefault();const target=$('plan-result');const seq=(state.planSeq||0)+1;state.planSeq=seq;editState.active=false;editState.draft=null;editState.count=0;editState.committing=false;target.replaceChildren(node('div','empty-card','正在规划…'));const algo=resolveRouteStyle();try{const data=await api('/api/plan',{method:'POST',body:JSON.stringify({city:$('city-picker').value,origin:$('origin').value,days:Number($('days').value),clustering:algo.clustering,routing:algo.routing,pace:$('pace-picker')?$('pace-picker').value:'relaxed',day_start:($('day-start')&&$('day-start').value)?$('day-start').value:'09:00',
 lodging:($('lodging')&&$('lodging').value)?$('lodging').value.trim():'',
 lodging_lat:lodgingPick.lat,
-lodging_lon:lodgingPick.lon,spot_ids:(poiState.city===$('city-picker').value.trim()?Array.from(poiState.selected):[]),spot_names:(poiState.city===$('city-picker').value.trim()?Array.from(poiState.selected).map(function(id){return poiState.names.get(id)||'';}).filter(Boolean):[])})});target.replaceChildren();renderPlan(data,target);}catch(err){target.replaceChildren(node('div','empty-card','生成失败：'+err.message));}}
+lodging_lon:lodgingPick.lon,spot_ids:(poiState.city===$('city-picker').value.trim()?Array.from(poiState.selected):[]),spot_names:(poiState.city===$('city-picker').value.trim()?Array.from(poiState.selected).map(function(id){return poiState.names.get(id)||'';}).filter(Boolean):[])})});if(seq!==state.planSeq)return;state.currentPlan=data;target.replaceChildren();renderPlan(data,target);}catch(err){if(seq!==state.planSeq)return;target.replaceChildren(node('div','empty-card','生成失败：'+err.message));}}
 async function submitBench(e){e.preventDefault();const root=$('bench-result');root.replaceChildren(node('div','empty-card','正在计算…'));try{const endpoint=$('bench-source').value==='fixture'?'/api/benchmark-fixture':'/api/benchmark';const data=await api(endpoint+'?'+new URLSearchParams({city:$('bench-city').value,days:$('bench-days').value}));const table=node('table','comparison-table');const head=node('tr');for(const h of ['聚类','路径优化','直线距离合计','簇数','噪声点'])head.appendChild(node('th','',h));table.appendChild(head);data.rows.forEach(row=>{const tr=node('tr');for(const val of [row.clustering,row.routing,row.distance_km+' km',row.cluster_count,row.noise_count])tr.appendChild(node('td','',String(val)));table.appendChild(tr);});root.replaceChildren(node('p','note','数据来源：'+(data.source||'未知')),table,node('p','note',data.note));}catch(err){root.replaceChildren(node('div','empty-card',err.message));}}
 async function refreshDefects(){try{const [quality,result]=await Promise.all([api('/api/quality-summary'),api('/api/defects')]);const metrics=$('quality-metrics');metrics.replaceChildren();for(const [k,label] of [['total_defects','累计缺陷'],['open','待处理'],['fixed','已修复'],['verified','已复测']]){const box=node('div','metric');add(box,node('span','',label),node('strong','',String(k==='total_defects'?quality.total_defects:quality.by_status[k])));metrics.appendChild(box);}const list=$('defect-list');list.replaceChildren();if(!result.defects.length){list.appendChild(node('div','empty-card','暂无缺陷记录。请先执行真实测试，再如实登记。'));return;}
 for(const d of result.defects){const card=node('div','defect-entry');const title=node('h3','',`#${d.id} ${d.title}`);title.appendChild(node('span','pill-tag',SEVERITIES[d.severity]||d.severity));add(card,title,node('p','',`复现步骤：${d.steps}`),node('p','',`预期：${d.expected}`),node('p','',`实际：${d.actual}`));const sel=node('select');for(const [v,label] of Object.entries(STATUSES)){const opt=node('option','',label);opt.value=v;sel.appendChild(opt);}sel.value=d.status;sel.addEventListener('change',async()=>{try{await api('/api/defects/'+d.id,{method:'PATCH',body:JSON.stringify({status:sel.value})});toast('缺陷状态已更新');refreshDefects();}catch(err){toast(err.message);sel.value=d.status;}});card.appendChild(sel);list.appendChild(card);}
