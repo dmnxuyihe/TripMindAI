@@ -218,7 +218,7 @@ def test_plan_edit_add_requires_coordinates(client):
                                  'spot': {'id': 'S9', 'name': '没有坐标的景点'}})
 
     assert response.status_code == 422
-    assert response.json()['detail'] == '景点缺少坐标，无法加入行程'
+    assert '景点缺少坐标' in response.json()['detail']
 
 
 def test_plan_edit_unknown_op_returns_422(client, two_spot_plan):

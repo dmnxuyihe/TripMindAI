@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-const state = {tab:'chat', conversationId:null, model:'qwen-plus', models:[], tasks:new Map(), mapConfig:null, currentPlan:null};
+const state = {tab:'chat', conversationId:null, model:'qwen-plus', models:[], tasks:new Map(), mapConfig:null, currentPlan:null, planTarget:null};
 const SEVERITIES = {critical:'致命',major:'严重',minor:'一般',suggestion:'建议'};
 const STATUSES = {open:'待处理',fixed:'已修复',verified:'已复测',wontfix:'暂不修复'};
 const TABS = {chat:'AI 对话',plan:'行程规划',lab:'算法实验室',defects:'测试与缺陷'};
@@ -439,20 +439,24 @@ function addSpotLocal(spot){
 
 async function commitEdit(){
   if(!editState.count){toast('还没有调整内容');return;}
-  const target=$('plan-result');
+  const target=state.planTarget||$('plan-result');
   try{
     const data=await api('/api/plan/reschedule',{method:'POST',
       body:JSON.stringify({plan:editState.draft}),timeout:90000});
+    const wanted=(editState.draft.daily||[]).reduce(function(n,d){return n+(d.spots||[]).length;},0);
+    const got=(data.daily||[]).reduce(function(n,d){return n+(d.spots||[]).length;},0);
     editState.active=false;editState.draft=null;editState.count=0;
     state.currentPlan=data;
     target.replaceChildren();
     renderPlan(data,target);
-    toast('已按你的调整重新规划路线');
+    toast(wanted>got
+      ? ('已重新规划：有 '+(wanted-got)+' 个景点时间装不下，已放回「待安排」')
+      : '已按你的调整重新规划路线');
   }catch(err){toast('重新规划失败：'+err.message);}
 }
 
 function renderCurrentPlan(){
-  const target=$('plan-result');
+  const target=state.planTarget||$('plan-result');
   if(!target)return;
   const plan=editState.active?editState.draft:state.currentPlan;
   if(!plan)return;
@@ -587,7 +591,8 @@ function opAddBestDay(spot){
 async function editPlan(payload){
   const plan=state.currentPlan;
   if(!plan){toast('没有可编辑的行程');return;}
-  const target=$('plan-result');
+  const target=state.planTarget||$('plan-result');
+  if(!target){toast('找不到行程区域，请重新生成一次');return;}
   try{
     const data=await api('/api/plan/edit',{method:'POST',body:JSON.stringify({plan:plan,...payload})});
     target.replaceChildren();
@@ -608,6 +613,7 @@ async function loadSharedTrip(id){
 
 function renderPlan(plan,target,compact=false){const wrap=node('section','result-wrap');const pendingMaps=[];const summary=node('div','plan-summary');add(summary,node('h2','',`${plan.origin} → ${plan.city} · ${plan.days} 天`),node('p','',`算法：${plan.clustering.toUpperCase()} + ${plan.routing.toUpperCase()}`+(plan.pace_label?` · ${plan.pace_label}节奏`:'')+` · ${plan.data_source}`));for(const [val,label] of [[plan.spot_count,'景点数'],[plan.total_distance_km+' km','直线距离合计'],[plan.cluster_count,'聚类簇数']]){const s=node('div','stat');add(s,node('strong','',String(val)),node('span','',label));summary.appendChild(s);}
 state.currentPlan=plan;
+state.planTarget=target;
 const actions=node('div','plan-actions');
 if(!editState.active){
   const saveBtn=node('button','ghost-action','保存并生成分享链接');saveBtn.type='button';

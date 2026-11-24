@@ -91,6 +91,18 @@ def travel_minutes(a: dict | None, b: dict) -> tuple[int, str]:
     return max(5, int(round(minutes / 5.0)) * 5), mode
 
 
+UNSCHEDULED_FIELDS = ('id', 'name', 'lat', 'lon', 'tags', 'duration_hours',
+                      'open_min', 'close_min', 'description')
+
+
+def _unscheduled_entry(spot, reason):
+    """未排入条目要保留坐标等字段，前端才能把它加回行程。"""
+    entry = {key: spot.get(key) for key in UNSCHEDULED_FIELDS if spot.get(key) is not None}
+    entry['name'] = spot.get('name') or '未命名景点'
+    entry['reason'] = reason
+    return entry
+
+
 def window_of(spot):
     """返回 (open_min, close_min, source)；source = real / estimated / none。"""
     open_min = spot.get('open_min')
@@ -315,7 +327,7 @@ def apply_schedule(plan: dict, pace: str = DEFAULT_PACE,
               if isinstance(u, dict) and u.get('name')
               and u['name'] not in scheduled_names
               and u['name'] not in overflow_names]
-    plan['unscheduled'] = ([{'name': s.get('name'), 'reason': '超出每日时间预算'} for s in leftovers]
+    plan['unscheduled'] = ([_unscheduled_entry(s, '超出每日时间预算') for s in leftovers]
                            + manual)
     plan['capacity'] = {
         'required_hours': round(required_hours, 1),

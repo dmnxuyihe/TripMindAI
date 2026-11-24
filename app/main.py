@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import case, func, select, text
 from .config import Settings
 from .agent import AgentError, run_agent
-from .amap import MapError, reverse_geocode
+from .amap import MapError, geocode, reverse_geocode
 from .itinerary import DEFAULT_DAY_END, DEFAULT_DAY_START, apply_schedule
 from .legs import prefetch as prefetch_legs
 from .geo import add_wgs84_fields
@@ -145,7 +145,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.4.1', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.4.2', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -171,7 +171,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.4.1', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.4.2', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -534,9 +534,18 @@ def create_app(settings: Settings | None = None, engine=None):
             plan.setdefault('unscheduled', []).insert(
                 0, {'name': target[0].get('name'), 'reason': '手动移除'})
         elif payload.op == 'add':
-            spot = payload.spot or {}
+            spot = dict(payload.spot or {})
+            if (spot.get('lat') is None or spot.get('lon') is None) and spot.get('name') and settings.amap_api_key:
+                # 旧版本的未排入条目可能只有名称，补一次地理编码
+                try:
+                    point = geocode(str(spot['name']), key=settings.amap_api_key,
+                                    timeout=max(1.0, min(3.0, settings.amap_timeout_seconds)))
+                except MapError:
+                    point = None
+                if point:
+                    spot.update(point)
             if spot.get('lat') is None or spot.get('lon') is None:
-                raise HTTPException(422, '景点缺少坐标，无法加入行程')
+                raise HTTPException(422, '景点缺少坐标，无法加入行程（可重新生成一次行程）')
             spots.append(spot)
             plan['unscheduled'] = [u for u in (plan.get('unscheduled') or [])
                                    if u.get('name') != spot.get('name')]
