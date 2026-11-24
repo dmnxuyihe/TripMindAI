@@ -172,26 +172,52 @@ def apply_schedule(plan: dict, pace: str = DEFAULT_PACE,
         leftovers.extend(overflow)
         scheduled_days.append({'placed': placed, 'timeline': timeline, 'load': load})
 
-    # 第二遍：把落选的景点塞进还有余量的天
+    def rebuild(placed):
+        return _plan_day(placed, start, end, budget, max_spots, center)
+
+    # 第二遍：落选景点直接塞进还有余量的天
     for spot in list(leftovers):
-        best = None
         for index, day in enumerate(scheduled_days):
             if day['load']['spot_count'] >= max_spots:
                 continue
-            last = day['placed'][-1] if day['placed'] else center
-            leg, _ = travel_minutes(last, spot)
-            need = day['load']['visit_hours'] * 60 + day['load']['travel_hours'] * 60 + leg + visit_hours(spot) * 60
-            if need <= budget and (best is None or need < best[0]):
-                best = (need, index)
-        if best is None:
-            break
-        index = best[1]
-        day = scheduled_days[index]
-        placed, timeline, load, overflow = _plan_day(
-            (day['placed'] or []) + [spot], start, end, budget, max_spots, center)
-        if len(placed) == len(day['placed']) + 1:
-            scheduled_days[index] = {'placed': placed, 'timeline': timeline, 'load': load}
-            leftovers.remove(spot)
+            placed, timeline, load, _ = rebuild((day['placed'] or []) + [spot])
+            if len(placed) == len(day['placed']) + 1:
+                scheduled_days[index] = {'placed': placed, 'timeline': timeline, 'load': load}
+                leftovers.remove(spot)
+                break
+
+    # 第三遍：换出补位——先换进一个落选景点，再把被换出的放进别的天。
+    # 只有「总排入数增加」才接受，因此不会让结果变差；顺序固定，结果可复现。
+    for _round in range(3):
+        progressed = False
+        for spot in list(leftovers):
+            if progressed:
+                break
+            for index, day in enumerate(scheduled_days):
+                if progressed:
+                    break
+                if day['load']['spot_count'] < 1:
+                    continue
+                for victim in list(day['placed']):
+                    rest = [s for s in day['placed'] if s is not victim]
+                    placed, timeline, load, _ = rebuild(rest + [spot])
+                    if len(placed) != len(rest) + 1:
+                        continue
+                    for other_index, other in enumerate(scheduled_days):
+                        if other_index == index or other['load']['spot_count'] >= max_spots:
+                            continue
+                        moved, moved_timeline, moved_load, _ = rebuild((other['placed'] or []) + [victim])
+                        if len(moved) != len(other['placed']) + 1:
+                            continue
+                        scheduled_days[index] = {'placed': placed, 'timeline': timeline, 'load': load}
+                        scheduled_days[other_index] = {'placed': moved,
+                                                       'timeline': moved_timeline,
+                                                       'load': moved_load}
+                        leftovers.remove(spot)
+                        progressed = True
+                        break
+                    if progressed:
+                        break
 
     total_scheduled = 0
     for day, scheduled in zip(plan.get('daily') or [], scheduled_days):
@@ -204,6 +230,17 @@ def apply_schedule(plan: dict, pace: str = DEFAULT_PACE,
             day['theme'] = day.get('theme') or '精选路线'
         total_scheduled += len(scheduled['placed'])
 
+    # 容量账本：把「总共需要多少小时 / 现在有多少小时」算给用户看，
+    # 让"排不下"成为可解释的结论，而不是系统悄悄少给几个景点。
+    day_count = len(plan.get('daily') or [])
+    per_day_budget = preset['budget_hours']
+    scheduled_hours = sum(d['load'].get('used_hours', 0) for d in scheduled_days)
+    pending_visit = sum(visit_hours(s) for s in leftovers)
+    pending_travel = 0.2 * len(leftovers)          # 每段预留约 12 分钟
+    required_hours = scheduled_hours + pending_visit + pending_travel
+    available_hours = day_count * per_day_budget
+    recommended_days = max(1, math.ceil(required_hours / per_day_budget)) if per_day_budget else day_count
+
     plan['pace'] = pace
     plan['pace_label'] = preset['label']
     plan['day_window'] = f'{day_start}–{day_end}'
@@ -211,17 +248,30 @@ def apply_schedule(plan: dict, pace: str = DEFAULT_PACE,
     plan['spot_count'] = total_scheduled
     plan['total_distance_km'] = round(sum(d.get('distance_km') or 0 for d in plan.get('daily') or []), 2)
     plan['unscheduled'] = [{'name': s.get('name'), 'reason': '超出每日时间预算'} for s in leftovers]
-    if plan['unscheduled']:
-        need_days = math.ceil((total_scheduled + len(leftovers)) / max(1, max_spots))
+    plan['capacity'] = {
+        'required_hours': round(required_hours, 1),
+        'available_hours': round(available_hours, 1),
+        'scheduled_hours': round(scheduled_hours, 1),
+        'recommended_days': recommended_days,
+        'total_spots': total_scheduled + len(leftovers),
+        'scheduled_spots': total_scheduled,
+        'unscheduled_spots': len(leftovers),
+    }
+    if leftovers:
         plan['capacity_note'] = (
-            f'{preset["label"]}节奏下每天最多 {max_spots} 个景点、约 {preset["budget_hours"]:g} 小时'
-            f'（时间窗 {day_start}–{day_end}）。本行程共 {total_scheduled + len(leftovers)} 个景点，'
-            f'已排入 {total_scheduled} 个，另有 {len(leftovers)} 个未排入；'
-            f'按这个节奏建议至少安排 {need_days} 天。')
+            f'{preset["label"]}节奏下每天最多 {max_spots} 个景点、约 {per_day_budget:g} 小时'
+            f'（时间窗 {day_start}–{day_end}）。本次共 {total_scheduled + len(leftovers)} 个景点，'
+            f'连游览带交通约需 {required_hours:.1f} 小时，当前 {day_count} 天可用 {available_hours:.1f} 小时；'
+            f'已排入 {total_scheduled} 个，另有 {len(leftovers)} 个排不下')
+        if required_hours <= available_hours:
+            plan['capacity_note'] += (f'（可用时长够，但受每日 {max_spots} 个景点上限与时间窗限制，'
+                                      '零散余量拼不出完整的一天）')
+        plan['capacity_note'] += f'；按这个节奏建议至少安排 {recommended_days} 天。'
     else:
         plan['capacity_note'] = (
-            f'{preset["label"]}节奏下每天最多 {max_spots} 个景点、约 {preset["budget_hours"]:g} 小时'
-            f'（时间窗 {day_start}–{day_end}），本次全部景点均已排入。')
+            f'{preset["label"]}节奏下每天最多 {max_spots} 个景点、约 {per_day_budget:g} 小时'
+            f'（时间窗 {day_start}–{day_end}），本次全部景点均已排入，'
+            f'共用 {scheduled_hours:.1f} 小时（可用 {available_hours:.1f} 小时）。')
     return plan
 
 
