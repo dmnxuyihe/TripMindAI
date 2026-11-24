@@ -111,7 +111,7 @@ function drawAmap(host,days,intercity,onAuthFail){
   }
   spots.forEach(function(s,i){
     overlays.push(new AMap.Marker({
-      position:[s.lon,s.lat],offset:new AMap.Pixel(-13,-13),zIndex:120+i,title:s.name,
+      position:[s.lon,s.lat],offset:new AMap.Pixel(-17,-17),zIndex:120+i,title:s.name,
       content:'<div class="route-pin"><span>'+(i+1)+'</span></div>'}));
   });
   map.add(overlays);
@@ -163,7 +163,7 @@ function drawLeaflet(host,days,intercity){
     }
     const allPts=spots.map(function(s){return coordOf(s,useWgs);});
     spots.forEach(function(s,i){
-      L.marker(allPts[i],{icon:L.divIcon({className:'route-pin',html:'<span>'+(i+1)+'</span>',iconSize:[26,26],iconAnchor:[13,13]})})
+      L.marker(allPts[i],{icon:L.divIcon({className:'route-pin',html:'<span>'+(i+1)+'</span>',iconSize:[34,34],iconAnchor:[17,17]})})
         .bindTooltip((i+1)+'. '+s.name,{direction:'top'}).addTo(group);
     });
     if(allPts.length)map.fitBounds(L.latLngBounds(allPts).pad(0.18),{maxZoom:15});
@@ -247,7 +247,7 @@ async function fillMaps(items){
     if(!item.panel.isConnected)return;
     const map=(item.kind==='daily')
       ? buildRouteMap(item.days,null)
-      : buildRouteMap([item.r.start,item.r.end],item.r);
+      : buildRouteMap([{spots:[item.r.start,item.r.end]}],item.r);
     item.panel.replaceChildren(map);
     if(item.kind==='daily'&&note)item.panel.appendChild(node('div','note',note));
   });
