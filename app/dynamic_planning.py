@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from .amap import MapError, amap_place_url, search_pois, geocode, driving_route
 from .geo import add_wgs84_fields
 from .legs import lookup_from, prefetch
-from .itinerary import apply_schedule
+from .itinerary import PACE_PRESETS, apply_schedule
 from .models import PoiCache
 from .travel_core import make_plan, benchmark, centroid, haversine
 
@@ -45,7 +45,8 @@ def discover(db, settings, city, keyword='景点', limit=16, *, amap_client=None
 
 def build_live_plan(db, settings, city, origin, days, interests='', must_visit=None,
                     clustering='kmeans', routing='greedy', *, pace=None, spot_ids=None,
-                    spot_names=None, day_start=None, lodging=None, amap_client=None):
+                    spot_names=None, day_start=None, lodging=None, lodging_point=None,
+                    amap_client=None):
     if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= 7:
         raise ValueError('旅行天数必须是 1～7 天')
     if clustering not in ('kmeans', 'dbscan') or routing not in ('greedy', 'dp'):
@@ -97,6 +98,14 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
             pass
     unique = list({p['id']: p for p in spots}.values())[:16]
     center = centroid(unique)
+    # 按节奏截断候选（每天最多几个），否则 1 天 16 个候选会撞上 DP 的 12 点上限
+    overflow = []
+    if pace:
+        preset = PACE_PRESETS.get(pace) or PACE_PRESETS['relaxed']
+        cap = max(1, days * int(preset['max_spots']))
+        if len(unique) > cap:
+            overflow = unique[cap:]
+            unique = unique[:cap]
     result = make_plan(city, origin, days, clustering, routing, external_spots=unique, center=center)
     result['data_source'] = '高德地图 POI 实时接口' if provenance == 'amap_live' else '高德地图 POI 缓存'
     result['amap_source'] = provenance
@@ -111,8 +120,13 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
             p['map_url'] = amap_place_url(p)
     result['intercity_route'] = None
     result['intercity_note'] = None
-    # 住宿基点：用户填了酒店/住处时，每天从那里出发
-    if lodging:
+    # 住宿基点：地图选点直接用坐标，手动输入则先做地理编码
+    if lodging_point and lodging_point.get('lat') is not None and lodging_point.get('lon') is not None:
+        hotel = {'lat': float(lodging_point['lat']), 'lon': float(lodging_point['lon'])}
+        result['lodging'] = {'name': (lodging or '地图选点')[:60], **hotel}
+        result['center'] = hotel
+        result['map_note'] = (result.get('map_note') or '') + ' 每日以住宿地为出发点。'
+    elif lodging:
         hotel = None
         try:
             hotel = geocode(lodging, key=settings.amap_api_key,
@@ -170,7 +184,7 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
                               budget_seconds=settings.amap_legs_budget_seconds,
                               client=amap_client)
         apply_schedule(result, pace, day_start or '09:00', '18:00',
-                       travel_lookup=lookup_from(prefetched))
+                       extra_unscheduled=overflow, travel_lookup=lookup_from(prefetched))
     return result
 
 

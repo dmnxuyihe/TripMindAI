@@ -104,6 +104,23 @@ def _dedupe(spots):
     return kept
 
 
+def reverse_geocode(lon: float, lat: float, *, key: str, timeout: float = 12, client=None):
+    """坐标 → 地址名称，用于“地图选点”后回填住宿地名称。"""
+    payload = _get('/v3/geocode/regeo', {'location': f'{float(lon):.6f},{float(lat):.6f}',
+                                         'output': 'json'}, timeout=timeout, key=key, client=client)
+    if str(payload.get('status')) != '1':
+        raise MapError(f"逆地理编码失败：{payload.get('info') or '未知错误'}")
+    regeocode = payload.get('regeocode') or {}
+    address = regeocode.get('formatted_address') or ''
+    component = regeocode.get('addressComponent') or {}
+    name = address or component.get('township') or component.get('district') or ''
+    if not name:
+        return None
+    return {'name': str(name)[:60],
+            'city': str(component.get('city') or component.get('province') or '')[:30],
+            'district': str(component.get('district') or '')[:30]}
+
+
 def search_pois(city: str, *, keyword: str = '景点', limit: int = 16, key: str, timeout: float = 12, client=None):
     city = city.strip()[:50]
     keyword = keyword.strip()[:65] or '景点'

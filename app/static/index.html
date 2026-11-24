@@ -7,7 +7,7 @@
   <title>TripMind AI · 真正的旅行智能体</title>
   <link rel="icon" href="/static/logo.png" />
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261126-1" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261126-3" />
 </head>
 <body>
 <div class="app-shell">
@@ -80,7 +80,12 @@
             <option value="fast">顺路 · 按最近邻一路走，计算最快</option>
             <option value="custom">自定义（在下方高级选项里选算法）</option>
           </select></label>
-          <label>住宿地（起点）<input id="lodging" maxlength="80" placeholder="可选，如：苏州站 / 观前街某酒店"></label>
+          <label>住宿地（起点）
+            <span class="input-with-action">
+              <input id="lodging" maxlength="80" placeholder="可选，手动输入或在地图上点选">
+              <button type="button" id="pick-lodging" class="ghost-action">地图选点</button>
+            </span>
+          </label>
           <button class="primary-btn" type="submit">生成行程 →</button>
           <details class="advanced-options">
             <summary>高级选项 · 算法细节（大多数情况用不到）</summary>
@@ -124,6 +129,6 @@
   </div>
 </div>
 <script src="/static/vendor/leaflet/leaflet.js" defer></script>
-<script src="/static/app.js?v=20261126-1" defer></script>
+<script src="/static/app.js?v=20261126-5" defer></script>
 </body>
 </html>

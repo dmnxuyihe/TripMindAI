@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import case, func, select, text
 from .config import Settings
 from .agent import AgentError, run_agent
-from .amap import MapError
+from .amap import MapError, reverse_geocode
 from .itinerary import DEFAULT_DAY_END, DEFAULT_DAY_START, apply_schedule
 from .legs import prefetch as prefetch_legs
 from .geo import add_wgs84_fields
@@ -51,6 +51,8 @@ class PlanInput(BaseModel):
     spot_ids: list[str] = Field(default_factory=list, max_length=16)
     day_start: str = Field(default='09:00', max_length=5)
     lodging: str = Field(default='', max_length=80)
+    lodging_lat: float | None = Field(default=None, ge=-90, le=90)
+    lodging_lon: float | None = Field(default=None, ge=-180, le=180)
     spot_names: list[str] = Field(default_factory=list, max_length=16)
     origin: str = Field(default='上海', max_length=50)
     days: int = Field(ge=1, le=7)
@@ -88,6 +90,11 @@ leg_geometry_cache: dict[tuple, tuple] = {}
 class ItineraryInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
     title: str = Field(default='我的行程', max_length=120)
+    plan: dict
+
+
+class PlanRescheduleInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     plan: dict
 
 
@@ -138,7 +145,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.4.0', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.4.1', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -164,7 +171,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.4.0', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.4.1', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -173,6 +180,20 @@ def create_app(settings: Settings | None = None, engine=None):
         return {'models': [{'id': name, 'name': name, 'configured': bool(settings.dashscope_api_key)}
                            for name in settings.qwen_models],
                 'default': settings.default_model if settings.default_model in settings.allowed_models else settings.qwen_models[0]}
+
+    @app.get('/api/geocode/reverse')
+    def geocode_reverse(lon: float = Query(ge=-180, le=180), lat: float = Query(ge=-90, le=90)):
+        """地图选点后回填地址名；没有 Key 或查不到时返回 name=None，前端退回显示坐标。"""
+        if not settings.amap_api_key:
+            return {'name': None, 'lon': lon, 'lat': lat, 'note': '未配置 AMAP_WEB_KEY'}
+        try:
+            info = reverse_geocode(lon, lat, key=settings.amap_api_key,
+                                   timeout=max(1.0, min(3.0, settings.amap_timeout_seconds)))
+        except MapError as exc:
+            return {'name': None, 'lon': lon, 'lat': lat, 'note': str(exc)}
+        if not info:
+            return {'name': None, 'lon': lon, 'lat': lat, 'note': '该位置没有可用地址'}
+        return {**info, 'lon': lon, 'lat': lat}
 
     @app.get('/api/map-config')
     def map_config():
@@ -235,7 +256,10 @@ def create_app(settings: Settings | None = None, engine=None):
                 return build_live_plan(db, settings, payload.city.strip(), payload.origin.strip(), payload.days,
                     clustering=payload.clustering, routing=payload.routing, pace=payload.pace,
                     spot_ids=payload.spot_ids, spot_names=payload.spot_names,
-                    day_start=payload.day_start.strip(), lodging=payload.lodging.strip() or None)
+                    day_start=payload.day_start.strip(), lodging=payload.lodging.strip() or None,
+                    lodging_point=({'lat': payload.lodging_lat, 'lon': payload.lodging_lon}
+                                   if payload.lodging_lat is not None and payload.lodging_lon is not None
+                                   else None))
             except (ValueError, MapError) as exc:
                 raise HTTPException(422, str(exc)) from exc
 
@@ -521,6 +545,21 @@ def create_app(settings: Settings | None = None, engine=None):
         day['spots'] = spots
         daily[index] = day
         plan['daily'] = daily
+        plan = apply_schedule(plan, plan.get('pace') or 'relaxed',
+                              plan.get('day_start') or DEFAULT_DAY_START,
+                              DEFAULT_DAY_END)
+        return plan
+
+    @app.post('/api/plan/reschedule')
+    def reschedule_plan(payload: PlanRescheduleInput):
+        """微调后一次性重排：按前端提交的每日景点分配重新算时间轴，只调用一次。"""
+        plan = dict(payload.plan or {})
+        daily = plan.get('daily')
+        if not isinstance(daily, list) or not daily:
+            raise HTTPException(422, '缺少行程数据')
+        for day in daily:
+            if not isinstance(day, dict) or not isinstance(day.get('spots'), list):
+                raise HTTPException(422, '行程结构不合法（daily 必须是含 spots 列表的对象数组）')
         plan = apply_schedule(plan, plan.get('pace') or 'relaxed',
                               plan.get('day_start') or DEFAULT_DAY_START,
                               DEFAULT_DAY_END)

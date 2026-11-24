@@ -6,11 +6,19 @@ const STATUSES = {open:'待处理',fixed:'已修复',verified:'已复测',wontfi
 const TABS = {chat:'AI 对话',plan:'行程规划',lab:'算法实验室',defects:'测试与缺陷'};
 
 async function api(path, options={}){
-  const res = await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});
-  let json;
-  try{json=await res.json();}catch(e){throw Error(`服务器返回非 JSON（HTTP ${res.status}）`);}
-  if(!res.ok){const detail=json.detail;throw Error(typeof detail==='string'?detail:JSON.stringify(detail||`HTTP ${res.status}`));}
-  return json;
+  const timeout=options.timeout||45000;
+  const controller=new AbortController();
+  const timer=setTimeout(function(){controller.abort();},timeout);
+  try{
+    const res = await fetch(path,{...options,signal:controller.signal,headers:{'Content-Type':'application/json',...(options.headers||{})}});
+    let json;
+    try{json=await res.json();}catch(e){throw Error(`服务器返回非 JSON（HTTP ${res.status}）`);}
+    if(!res.ok){const detail=json.detail;throw Error(typeof detail==='string'?detail:JSON.stringify(detail||`HTTP ${res.status}`));}
+    return json;
+  }catch(err){
+    if(err&&err.name==='AbortError')throw Error('请求超时（'+(timeout/1000)+' 秒），请稍后重试');
+    throw err;
+  }finally{clearTimeout(timer);}
 }
 let toastTimer;
 function toast(message){const el=$('toast');el.textContent=message;el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,5000);}
@@ -382,6 +390,171 @@ function shape(tag,attrs){const el=document.createElementNS('http://www.w3.org/2
 for(let i=0;i<5;i++)shape('line',{x1:25,x2:W-25,y1:20+i*54,y2:20+i*54,stroke:'#e0eae5','stroke-width':1,'stroke-dasharray':'4 6'});
 if(spots.length>1)shape('polyline',{points:spots.map(s=>`${px(s)},${py(s)}`).join(' '),fill:'none',stroke:'#2a9c80','stroke-width':3.5,'stroke-linecap':'round','stroke-linejoin':'round'});
 spots.forEach((s,i)=>{shape('circle',{cx:px(s),cy:py(s),r:11,fill:'#fff',stroke:'#168569','stroke-width':3});const t=shape('text',{x:px(s),y:py(s)-20,'text-anchor':'middle',fill:'#3d6660','font-size':11,'font-weight':600});t.textContent=`${i+1} ${s.name}`;const n=shape('text',{x:px(s),y:py(s)+4,'text-anchor':'middle',fill:'#16785e','font-size':10,'font-weight':700});n.textContent=String(i+1);});return svg;}
+/* ---------------- 微调模式：本地调整，确认后一次重算 ---------------- */
+const editState={active:false,draft:null,count:0};
+
+function startEdit(){
+  if(!state.currentPlan){toast('先规划一版行程');return;}
+  editState.active=true;
+  editState.draft=JSON.parse(JSON.stringify(state.currentPlan));
+  editState.count=0;
+  renderCurrentPlan();
+  toast('已进入微调模式：点胶囊上的 × 移除，改完点「重新规划路线」');
+}
+
+function cancelEdit(){
+  editState.active=false;editState.draft=null;editState.count=0;
+  renderCurrentPlan();
+  toast('已取消本次微调');
+}
+
+function removeSpotLocal(dayNumber,spot){
+  const plan=editState.draft;
+  const day=(plan.daily||[]).filter(function(d){return d.day===dayNumber;})[0];
+  if(!day)return;
+  day.spots=(day.spots||[]).filter(function(s){return s.id!==spot.id;});
+  plan.unscheduled=plan.unscheduled||[];
+  if(!plan.unscheduled.some(function(u){return u.name===spot.name;})){
+    plan.unscheduled.unshift(Object.assign({},spot,{reason:'手动移除'}));
+  }
+  editState.count+=1;
+  renderCurrentPlan();
+}
+
+function addSpotLocal(spot){
+  const plan=editState.draft;
+  let best=1,bestCount=Infinity;
+  (plan.daily||[]).forEach(function(day){
+    const count=(day.spots||[]).length;
+    if(count<bestCount){bestCount=count;best=day.day;}
+  });
+  const day=(plan.daily||[]).filter(function(d){return d.day===best;})[0];
+  if(!day)return;
+  day.spots=(day.spots||[]).concat([spot]);
+  plan.unscheduled=(plan.unscheduled||[]).filter(function(u){return u.name!==spot.name;});
+  editState.count+=1;
+  renderCurrentPlan();
+  toast('已加入第 '+best+' 天（点「重新规划路线」生效）');
+}
+
+async function commitEdit(){
+  if(!editState.count){toast('还没有调整内容');return;}
+  const target=$('plan-result');
+  try{
+    const data=await api('/api/plan/reschedule',{method:'POST',
+      body:JSON.stringify({plan:editState.draft}),timeout:90000});
+    editState.active=false;editState.draft=null;editState.count=0;
+    state.currentPlan=data;
+    target.replaceChildren();
+    renderPlan(data,target);
+    toast('已按你的调整重新规划路线');
+  }catch(err){toast('重新规划失败：'+err.message);}
+}
+
+function renderCurrentPlan(){
+  const target=$('plan-result');
+  if(!target)return;
+  const plan=editState.active?editState.draft:state.currentPlan;
+  if(!plan)return;
+  target.replaceChildren();
+  renderPlan(plan,target);
+}
+
+/* ---------------- 住宿地地图选点 ---------------- */
+const lodgingPick={lat:null,lon:null,map:null,marker:null,mode:null};
+
+function ensureLodgingModal(){
+  let modal=document.getElementById('lodging-modal');
+  if(modal)return modal;
+  modal=node('div','modal-overlay');modal.id='lodging-modal';
+  const card=node('div','modal-card');
+  const head=node('div','modal-head');
+  head.appendChild(node('h3','','在地图上选择住宿地'));
+  const close=node('button','modal-close','×');close.type='button';
+  close.addEventListener('click',closeLodgingPicker);head.appendChild(close);
+  const host=node('div','lodging-map');host.id='lodging-map';
+  const hint=node('p','note','点击地图选择位置，确认后会自动回填地址名。');
+  hint.id='lodging-hint';
+  const foot=node('div','modal-foot');
+  const cancel=node('button','ghost-action','取消');cancel.type='button';
+  cancel.addEventListener('click',closeLodgingPicker);
+  const ok=node('button','primary-btn','使用这个位置');ok.type='button';
+  ok.addEventListener('click',confirmLodgingPick);
+  add(foot,cancel,ok);
+  add(card,head,host,hint,foot);
+  modal.appendChild(card);
+  modal.addEventListener('click',function(e){if(e.target===modal)closeLodgingPicker();});
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function openLodgingPicker(){
+  ensureLodgingModal().classList.add('open');
+  document.body.classList.add('modal-open');
+  setTimeout(initLodgingMap,60);
+}
+
+function closeLodgingPicker(){
+  const modal=document.getElementById('lodging-modal');
+  if(modal)modal.classList.remove('open');
+  document.body.classList.remove('modal-open');
+}
+
+function initLodgingMap(){
+  const host=document.getElementById('lodging-map');
+  if(!host)return;
+  if(host.dataset.ready==='1'){if(lodgingPick.mode==='leaflet'&&lodgingPick.map)lodgingPick.map.invalidateSize();return;}
+  host.dataset.ready='1';
+  if(window.AMap&&state.mapConfig&&state.mapConfig.provider==='amap-js'){
+    hookAmapErrors();
+    lodgingPick.mode='amap';
+    lodgingPick.map=new AMap.Map(host,{zoom:11,viewMode:'2D'});
+    lodgingPick.map.on('click',function(e){setLodgingPoint(e.lnglat.getLng(),e.lnglat.getLat());});
+    return;
+  }
+  lodgingPick.mode='leaflet';
+  const map=L.map(host,{scrollWheelZoom:true});
+  L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+    {subdomains:'1234',maxZoom:18,attribution:'&copy; 高德地图'}).addTo(map);
+  map.setView([31.3,120.6],11);
+  map.on('click',function(e){setLodgingPoint(e.latlng.lng,e.latlng.lat);});
+  lodgingPick.map=map;
+}
+
+function setLodgingPoint(lon,lat){
+  lodgingPick.lon=Number(lon);lodgingPick.lat=Number(lat);
+  const hint=document.getElementById('lodging-hint');
+  if(hint)hint.textContent='已选：'+Number(lon).toFixed(5)+', '+Number(lat).toFixed(5)+'（确认后回填地址名）';
+  if(lodgingPick.mode==='amap'&&lodgingPick.map){
+    if(lodgingPick.marker)lodgingPick.marker.setPosition([lon,lat]);
+    else{lodgingPick.marker=new AMap.Marker({position:[lon,lat]});lodgingPick.map.add(lodgingPick.marker);}
+    lodgingPick.map.setZoomAndCenter(14,[lon,lat]);
+  }else if(lodgingPick.mode==='leaflet'&&lodgingPick.map){
+    if(lodgingPick.marker)lodgingPick.marker.setLatLng([lat,lon]);
+    else lodgingPick.marker=L.marker([lat,lon]).addTo(lodgingPick.map);
+    lodgingPick.map.setView([lat,lon],14);
+  }
+}
+
+async function confirmLodgingPick(){
+  if(lodgingPick.lat==null||lodgingPick.lon==null){toast('请先在地图上点一个位置');return;}
+  const input=$('lodging');
+  const coordText=lodgingPick.lon.toFixed(5)+', '+lodgingPick.lat.toFixed(5);
+  // 先落坐标并关闭弹窗，避免逆地理编码慢时界面像卡住
+  input.value=coordText;
+  closeLodgingPicker();
+  toast('住宿地已设为：'+coordText+'（正在获取地址名）');
+  try{
+    const data=await api('/api/geocode/reverse?lon='+lodgingPick.lon+'&lat='+lodgingPick.lat);
+    if(data.name&&document.getElementById('lodging').value===coordText){
+      document.getElementById('lodging').value=data.name;
+      toast('已回填地址：'+data.name);
+    }
+  }catch(err){/* 保留坐标即可 */}
+}
+
+window.__setLodgingPoint=setLodgingPoint;
+
 /* ---------------- 保存/分享与微调 ---------------- */
 async function saveItinerary(plan,container,button){
   button.disabled=true;
@@ -436,9 +609,23 @@ async function loadSharedTrip(id){
 function renderPlan(plan,target,compact=false){const wrap=node('section','result-wrap');const pendingMaps=[];const summary=node('div','plan-summary');add(summary,node('h2','',`${plan.origin} → ${plan.city} · ${plan.days} 天`),node('p','',`算法：${plan.clustering.toUpperCase()} + ${plan.routing.toUpperCase()}`+(plan.pace_label?` · ${plan.pace_label}节奏`:'')+` · ${plan.data_source}`));for(const [val,label] of [[plan.spot_count,'景点数'],[plan.total_distance_km+' km','直线距离合计'],[plan.cluster_count,'聚类簇数']]){const s=node('div','stat');add(s,node('strong','',String(val)),node('span','',label));summary.appendChild(s);}
 state.currentPlan=plan;
 const actions=node('div','plan-actions');
-const saveBtn=node('button','ghost-action','保存并生成分享链接');saveBtn.type='button';
-saveBtn.addEventListener('click',function(){saveItinerary(plan,actions,saveBtn);});
-actions.appendChild(saveBtn);
+if(!editState.active){
+  const saveBtn=node('button','ghost-action','保存并生成分享链接');saveBtn.type='button';
+  saveBtn.addEventListener('click',function(){saveItinerary(plan,actions,saveBtn);});
+  actions.appendChild(saveBtn);
+  const editBtn=node('button','ghost-action ghost-strong','微调行程');editBtn.type='button';
+  editBtn.addEventListener('click',startEdit);
+  actions.appendChild(editBtn);
+}else{
+  const bar=node('div','edit-bar');
+  bar.appendChild(node('span','edit-count','微调中：已调整 '+editState.count+' 项'));
+  const commit=node('button','primary-btn edit-commit','重新规划路线');commit.type='button';
+  commit.addEventListener('click',commitEdit);
+  const cancel=node('button','ghost-action','取消');cancel.type='button';
+  cancel.addEventListener('click',cancelEdit);
+  bar.appendChild(commit);bar.appendChild(cancel);
+  actions.appendChild(bar);
+}
 if(plan.lodging){actions.appendChild(node('span','note-inline','起点：'+(plan.lodging.name||'')));}
 summary.appendChild(actions);
 wrap.appendChild(summary);
@@ -446,12 +633,19 @@ const all=[];
 for(const day of plan.daily){const card=node('section','day-card');add(card,node('h3','',`第 ${day.day} 天 · ${day.theme}`),node('div','day-meta',day.spots.length+' 个景点 · 游览 '+((day.day_load&&day.day_load.visit_hours)||day.duration_hours)+' 小时 · 交通 '+((day.day_load&&day.day_load.travel_hours)||0)+' 小时 · 余量 '+((day.day_load&&day.day_load.spare_hours)||0)+' 小时 · 直线约 '+day.distance_km+' km'));const chips=node('div','spot-list');for(const spot of day.spots){all.push(spot);const b=node('button','spot-pill',spot.name+' ↗');b.type='button';b.addEventListener('click',()=>{const old=card.querySelector('.spot-detail');if(old)old.remove();const detail=node('div','spot-detail');detail.style.cssText='margin-top:13px;padding:13px;background:#f8faf8;border-radius:10px;line-height:1.8';add(detail,node('strong','',spot.name),node('p','',spot.description||'暂无描述'),node('div','note',`建议游览 ${spot.duration_hours} 小时 · ${spot.tags.join(' / ')}`));if(spot.map_url){const a=node('a','meta-link','在高德地图查看 ↗');a.href=spot.map_url;a.target='_blank';a.rel='noopener noreferrer';detail.appendChild(a);}const removeBtn=node('button','ghost-action','从这个行程移除');removeBtn.type='button';
 removeBtn.addEventListener('click',function(){editPlan(opRemove(day.day,spot.id));});
 detail.appendChild(removeBtn);
-if(spot.photo_url){const img=node('img');img.src=spot.photo_url;img.alt=spot.name;img.loading='lazy';img.style.cssText='max-width:100%;max-height:240px;object-fit:cover;border-radius:10px';img.onerror=()=>img.remove();detail.appendChild(img);if(spot.photo_credit){const source=node('a','meta-link',spot.photo_credit);source.href=spot.photo_source||spot.photo_url;source.target='_blank';source.rel='noopener noreferrer';detail.appendChild(source);}}else detail.appendChild(node('p','note','暂未收录该景点的授权实景照片，可在数据库 photo_url 字段补充。'));card.appendChild(detail);});chips.appendChild(b);}card.appendChild(chips);if(Array.isArray(day.timeline)&&day.timeline.length){const tl=node('ol','day-timeline');day.timeline.forEach(function(item){const li=node('li','tl-item tl-'+item.kind);add(li,node('span','tl-time',item.start+'–'+item.end),node('span','tl-label',item.label));
+if(spot.photo_url){const img=node('img');img.src=spot.photo_url;img.alt=spot.name;img.loading='lazy';img.style.cssText='max-width:100%;max-height:240px;object-fit:cover;border-radius:10px';img.onerror=()=>img.remove();detail.appendChild(img);if(spot.photo_credit){const source=node('a','meta-link',spot.photo_credit);source.href=spot.photo_source||spot.photo_url;source.target='_blank';source.rel='noopener noreferrer';detail.appendChild(source);}}else detail.appendChild(node('p','note','暂未收录该景点的授权实景照片，可在数据库 photo_url 字段补充。'));card.appendChild(detail);});if(editState.active){
+  const wrap=node('span','pill-wrap');wrap.appendChild(b);
+  const x=node('button','pill-x','×');x.type='button';x.title='从这一天移除（改完点「重新规划路线」）';
+  x.addEventListener('click',function(ev){ev.stopPropagation();removeSpotLocal(day.day,spot);});
+  wrap.appendChild(x);chips.appendChild(wrap);
+}else{chips.appendChild(b);}}card.appendChild(chips);
+if(!day.spots.length){card.appendChild(node('p','note','本日没有景点；可点上方「微调行程」，从「待安排」里把景点加回来。'));}
+if(editState.active){const tip=node('p','edit-tip','点胶囊上的 × 移除；下方「待安排」里的景点可点 + 加回；改完点上方「重新规划路线」。');card.appendChild(tip);}if(Array.isArray(day.timeline)&&day.timeline.length){const tl=node('ol','day-timeline');day.timeline.forEach(function(item){const li=node('li','tl-item tl-'+item.kind);add(li,node('span','tl-time',item.start+'–'+item.end),node('span','tl-label',item.label));
 if(item.warning){li.appendChild(node('span','tl-warn','⚠ '+item.warning));}tl.appendChild(li);});card.appendChild(tl);}wrap.appendChild(card);}
 if(plan.unscheduled&&plan.unscheduled.length){const box=node('section','day-card unscheduled-card');box.appendChild(node('h3','','未排入的景点'));box.appendChild(node('div','day-meta',plan.capacity_note||'超出每日时间预算，建议增加天数'));const list=node('div','spot-list');plan.unscheduled.forEach(function(s){const btn=node('button','spot-pill','+ '+s.name);btn.type='button';
 btn.title='加入行程（自动选当天景点最少的一天）';
-btn.addEventListener('click',function(){editPlan(opAddBestDay(s));});
-list.appendChild(btn);});box.appendChild(list);wrap.appendChild(box);}
+btn.addEventListener('click',function(){if(editState.active)addSpotLocal(s);else editPlan(opAddBestDay(s));});
+list.appendChild(btn);});box.appendChild(list);if(editState.active&&!plan.unscheduled.length){box.appendChild(node('p','note','待安排已清空，所有景点都在行程里了。'));}wrap.appendChild(box);}
 if(plan.intercity_route){const r=plan.intercity_route;const card=node('section','day-card');add(card,node('h3','',`跨城市路线示意 · ${r.origin} → ${r.destination}`),node('div','day-meta',r.driving_distance_km!==undefined?`高德驾车 ${r.driving_distance_km} km · 估计 ${r.driving_duration_min} 分钟（不含实时路况）`:`两地直线距离约 ${r.straight_km} km，非高铁/驾车里程`));const panel=node('div','route-graphic');panel.appendChild(mapPlaceholder('正在计算跨城路线…'));card.appendChild(panel);wrap.appendChild(card);pendingMaps.push({panel:panel,kind:'intercity',r:r});}
 if(all.length){const panel=node('div','route-graphic');panel.appendChild(mapPlaceholder('正在计算沿道路路线…'));wrap.appendChild(panel);pendingMaps.push({panel:panel,kind:'daily',days:plan.daily});}
 if(!plan.intercity_route&&plan.intercity_note){wrap.appendChild(node('div','note',plan.intercity_note));}if(plan.capacity_note&&!(plan.unscheduled&&plan.unscheduled.length))wrap.appendChild(node('div','note',plan.capacity_note));if(plan.selection_note)wrap.appendChild(node('div','note',plan.selection_note));if(plan.route_note)wrap.appendChild(node('div','note',plan.route_note));wrap.appendChild(node('div','note',plan.map_note||plan.distance_note));if(compact)wrap.style.marginTop='20px';target.appendChild(wrap);if(pendingMaps.length)fillMaps(pendingMaps);
@@ -521,7 +715,9 @@ function syncStyleControls(){
   ['cluster-picker','route-picker'].forEach(function(id){const el=$(id);if(el)el.disabled=!custom;});
 }
 async function submitPlan(e){e.preventDefault();const target=$('plan-result');target.replaceChildren(node('div','empty-card','正在规划…'));const algo=resolveRouteStyle();try{const data=await api('/api/plan',{method:'POST',body:JSON.stringify({city:$('city-picker').value,origin:$('origin').value,days:Number($('days').value),clustering:algo.clustering,routing:algo.routing,pace:$('pace-picker')?$('pace-picker').value:'relaxed',day_start:($('day-start')&&$('day-start').value)?$('day-start').value:'09:00',
-lodging:($('lodging')&&$('lodging').value)?$('lodging').value.trim():'',spot_ids:(poiState.city===$('city-picker').value.trim()?Array.from(poiState.selected):[]),spot_names:(poiState.city===$('city-picker').value.trim()?Array.from(poiState.selected).map(function(id){return poiState.names.get(id)||'';}).filter(Boolean):[])})});target.replaceChildren();renderPlan(data,target);}catch(err){target.replaceChildren(node('div','empty-card','生成失败：'+err.message));}}
+lodging:($('lodging')&&$('lodging').value)?$('lodging').value.trim():'',
+lodging_lat:lodgingPick.lat,
+lodging_lon:lodgingPick.lon,spot_ids:(poiState.city===$('city-picker').value.trim()?Array.from(poiState.selected):[]),spot_names:(poiState.city===$('city-picker').value.trim()?Array.from(poiState.selected).map(function(id){return poiState.names.get(id)||'';}).filter(Boolean):[])})});target.replaceChildren();renderPlan(data,target);}catch(err){target.replaceChildren(node('div','empty-card','生成失败：'+err.message));}}
 async function submitBench(e){e.preventDefault();const root=$('bench-result');root.replaceChildren(node('div','empty-card','正在计算…'));try{const endpoint=$('bench-source').value==='fixture'?'/api/benchmark-fixture':'/api/benchmark';const data=await api(endpoint+'?'+new URLSearchParams({city:$('bench-city').value,days:$('bench-days').value}));const table=node('table','comparison-table');const head=node('tr');for(const h of ['聚类','路径优化','直线距离合计','簇数','噪声点'])head.appendChild(node('th','',h));table.appendChild(head);data.rows.forEach(row=>{const tr=node('tr');for(const val of [row.clustering,row.routing,row.distance_km+' km',row.cluster_count,row.noise_count])tr.appendChild(node('td','',String(val)));table.appendChild(tr);});root.replaceChildren(node('p','note','数据来源：'+(data.source||'未知')),table,node('p','note',data.note));}catch(err){root.replaceChildren(node('div','empty-card',err.message));}}
 async function refreshDefects(){try{const [quality,result]=await Promise.all([api('/api/quality-summary'),api('/api/defects')]);const metrics=$('quality-metrics');metrics.replaceChildren();for(const [k,label] of [['total_defects','累计缺陷'],['open','待处理'],['fixed','已修复'],['verified','已复测']]){const box=node('div','metric');add(box,node('span','',label),node('strong','',String(k==='total_defects'?quality.total_defects:quality.by_status[k])));metrics.appendChild(box);}const list=$('defect-list');list.replaceChildren();if(!result.defects.length){list.appendChild(node('div','empty-card','暂无缺陷记录。请先执行真实测试，再如实登记。'));return;}
 for(const d of result.defects){const card=node('div','defect-entry');const title=node('h3','',`#${d.id} ${d.title}`);title.appendChild(node('span','pill-tag',SEVERITIES[d.severity]||d.severity));add(card,title,node('p','',`复现步骤：${d.steps}`),node('p','',`预期：${d.expected}`),node('p','',`实际：${d.actual}`));const sel=node('select');for(const [v,label] of Object.entries(STATUSES)){const opt=node('option','',label);opt.value=v;sel.appendChild(opt);}sel.value=d.status;sel.addEventListener('change',async()=>{try{await api('/api/defects/'+d.id,{method:'PATCH',body:JSON.stringify({status:sel.value})});toast('缺陷状态已更新');refreshDefects();}catch(err){toast(err.message);sel.value=d.status;}});card.appendChild(sel);list.appendChild(card);}
@@ -530,6 +726,8 @@ async function submitDefect(e){e.preventDefault();const values={title:$('defect-
 async function init(){document.querySelectorAll('[data-tab]').forEach(n=>n.addEventListener('click',()=>selectTab(n.dataset.tab)));$('new-chat').addEventListener('click',resetChat);$('refresh-history').addEventListener('click',()=>loadHistory().catch(e=>toast(e.message)));$('model-picker').addEventListener('change',e=>{state.model=e.target.value;updateModelBadge();});$('chat-form').addEventListener('submit',e=>{e.preventDefault();const message=$('chat-input').value.trim();if(!message)return;$('chat-input').value='';sendChat(message);});$('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('chat-form').requestSubmit();}});document.querySelectorAll('[data-prompt]').forEach(btn=>btn.addEventListener('click',()=>{$('chat-input').value=btn.dataset.prompt;$('chat-form').requestSubmit();}));$('plan-form').addEventListener('submit',submitPlan);$('bench-form').addEventListener('submit',submitBench);$('defect-form').addEventListener('submit',submitDefect);$('mobile-menu').addEventListener('click',()=>{$('sidebar').classList.add('mobile-open');$('overlay').hidden=false;});$('overlay').addEventListener('click',closeSidebar);
 if($('style-picker')){$('style-picker').addEventListener('change',syncStyleControls);syncStyleControls();}
   if($('load-pois')){$('load-pois').addEventListener('click',loadPoiCandidates);}
+  if($('pick-lodging')){$('pick-lodging').addEventListener('click',openLodgingPicker);}
+  if($('lodging')){$('lodging').addEventListener('input',function(){lodgingPick.lat=null;lodgingPick.lon=null;});}
   const shared=new URLSearchParams(location.search).get('trip');
   if(shared){loadSharedTrip(shared);}
   if($('city-picker')){$('city-picker').addEventListener('input',function(){if(poiState.city&&poiState.city!==$('city-picker').value.trim()){poiState.spots=[];poiState.selected=new Set();poiState.city='';renderPoiOptions();const st=$('poi-status');if(st)st.textContent='目的地已修改，请重新获取候选';}});}
