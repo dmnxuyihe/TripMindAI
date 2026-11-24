@@ -48,6 +48,7 @@ class PlanInput(BaseModel):
     pace: str = Field(default='relaxed', max_length=16)
     spot_ids: list[str] = Field(default_factory=list, max_length=16)
     day_start: str = Field(default='09:00', max_length=5)
+    spot_names: list[str] = Field(default_factory=list, max_length=16)
     origin: str = Field(default='上海', max_length=50)
     days: int = Field(ge=1, le=7)
     clustering: str = 'kmeans'
@@ -119,7 +120,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.3.4', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.3.5', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -134,7 +135,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.3.4', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.3.5', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -204,7 +205,8 @@ def create_app(settings: Settings | None = None, engine=None):
             try:
                 return build_live_plan(db, settings, payload.city.strip(), payload.origin.strip(), payload.days,
                     clustering=payload.clustering, routing=payload.routing, pace=payload.pace,
-                    spot_ids=payload.spot_ids, day_start=payload.day_start.strip())
+                    spot_ids=payload.spot_ids, spot_names=payload.spot_names,
+                    day_start=payload.day_start.strip())
             except (ValueError, MapError) as exc:
                 raise HTTPException(422, str(exc)) from exc
 
