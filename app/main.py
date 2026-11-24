@@ -10,7 +10,7 @@ import time
 from datetime import timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -145,7 +145,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.4.2', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.4.3', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -171,7 +171,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.4.2', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.4.3', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -474,20 +474,30 @@ def create_app(settings: Settings | None = None, engine=None):
         note = f'共 {len(legs)} 段景点间路线，{routed} 段取得高德道路轨迹（耗时与时间轴一致）；其余为直线估计。'
         return {'legs': legs, 'note': note}
 
-    @app.post('/api/itineraries', status_code=201)
-    def save_itinerary(payload: ItineraryInput):
+    @app.post('/api/itineraries')
+    def save_itinerary(payload: ItineraryInput, response: Response):
         plan = payload.plan or {}
         daily = plan.get('daily')
         if not isinstance(daily, list) or not daily:
             raise HTTPException(422, '没有可保存的行程内容')
         if not all(isinstance(day, dict) and isinstance(day.get('spots'), list) for day in daily):
             raise HTTPException(422, '行程结构不合法（daily 必须是含 spots 列表的对象数组）')
+        body = json.dumps(plan, ensure_ascii=False, default=str)
+        # 同一份行程重复保存时复用已有记录，避免点几次生成几条分享链接
+        with Session() as db:
+            existing = db.scalars(select(Itinerary).where(Itinerary.payload == body)
+                                  .order_by(Itinerary.created_at.desc()).limit(1)).first()
+            if existing is not None:
+                response.status_code = 200
+                return {'id': existing.id, 'url': f'/?trip={existing.id}',
+                        'title': existing.title, 'reused': True}
         obj = Itinerary(id=str(uuid4()), title=payload.title.strip() or '我的行程',
                         city=str(plan.get('city') or '')[:50], days=int(plan.get('days') or len(plan['daily'])),
-                        payload=json.dumps(plan, ensure_ascii=False, default=str))
+                        payload=body)
         with Session.begin() as db:
             db.add(obj)
-        return {'id': obj.id, 'url': f'/?trip={obj.id}', 'title': obj.title}
+        response.status_code = 201
+        return {'id': obj.id, 'url': f'/?trip={obj.id}', 'title': obj.title, 'reused': False}
 
     @app.get('/api/itineraries')
     def list_itineraries(limit: int = Query(default=30, ge=1, le=100)):

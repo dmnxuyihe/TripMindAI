@@ -561,19 +561,32 @@ window.__setLodgingPoint=setLodgingPoint;
 
 /* ---------------- 保存/分享与微调 ---------------- */
 async function saveItinerary(plan,container,button){
+  if(button.disabled)return;
+  if(state.shareCache&&state.shareCache.plan===plan){renderShareBox(container,state.shareCache.url);return;}
   button.disabled=true;
+  const label=button.textContent;
+  button.textContent='保存中…';
   try{
     const title=(plan.city||'')+' '+(plan.days||'')+' 天行程';
     const data=await api('/api/itineraries',{method:'POST',body:JSON.stringify({title:title,plan:plan})});
     const url=location.origin+data.url;
-    const box=node('div','share-box');
-    const input=node('input','share-input');input.value=url;input.readOnly=true;
-    const copy=node('button','ghost-action','复制');copy.type='button';
-    copy.addEventListener('click',function(){input.select();try{document.execCommand('copy');}catch(e){}toast('链接已复制');});
-    add(box,input,copy,node('a','meta-link','打开'));box.lastChild.href=url;box.lastChild.target='_blank';
-    container.appendChild(box);
+    state.shareCache={plan:plan,url:url};
+    renderShareBox(container,url);
+    toast(data.reused?'这份行程之前保存过，已复用原链接':'分享链接已生成');
   }catch(err){toast('保存失败：'+err.message);}
-  finally{button.disabled=false;}
+  finally{button.disabled=false;button.textContent=label;}
+}
+
+function renderShareBox(container,url){
+  const old=container.querySelector('.share-box');
+  if(old)old.remove();
+  const box=node('div','share-box');
+  const input=node('input','share-input');input.value=url;input.readOnly=true;
+  const copy=node('button','ghost-action','复制');copy.type='button';
+  copy.addEventListener('click',function(){input.select();try{document.execCommand('copy');}catch(e){}toast('链接已复制');});
+  const open=node('a','meta-link','打开');open.href=url;open.target='_blank';
+  add(box,input,copy,open);
+  container.appendChild(box);
 }
 
 function opRemove(dayNumber,spotId){return {op:'remove',day:dayNumber,spot_id:spotId};}
