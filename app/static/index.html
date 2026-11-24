@@ -7,7 +7,7 @@
   <title>TripMind AI · 真正的旅行智能体</title>
   <link rel="icon" href="/static/logo.png" />
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261125-3" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261125-4" />
 </head>
 <body>
 <div class="app-shell">
@@ -68,9 +68,26 @@
           <label>出发地<input id="origin" value="上海" maxlength="50" placeholder="例如：北京" /></label>
           <label>目的地<input id="city-picker" maxlength="50" value="苏州市" placeholder="输入任意中国城市，如苏州市" required></label>
           <label>旅行天数<input id="days" type="number" min="1" max="7" value="3" required></label>
-          <label>聚类算法<select id="cluster-picker"><option value="kmeans">K-means</option><option value="dbscan">DBSCAN</option></select></label>
-          <label>路径算法<select id="route-picker"><option value="greedy">贪心最近邻</option><option value="dp">动态规划 Held-Karp</option></select></label>
+          <label>旅行节奏<select id="pace-picker">
+            <option value="relaxed" selected>休闲 · 每天 3 个景点 / 约 6 小时</option>
+            <option value="normal">标准 · 每天 4 个景点 / 约 7.5 小时</option>
+            <option value="packed">紧凑 · 每天 5 个景点 / 约 8.5 小时</option>
+          </select></label>
+          <label>路线风格<select id="style-picker">
+            <option value="balanced" selected>均衡 · 按片区分天，组内路线最短</option>
+            <option value="compact">集中 · 把相近的景点凑成一团，少跨区</option>
+            <option value="fast">顺路 · 按最近邻一路走，计算最快</option>
+            <option value="custom">自定义（在下方高级选项里选算法）</option>
+          </select></label>
           <button class="primary-btn" type="submit">生成行程 →</button>
+          <details class="advanced-options">
+            <summary>高级选项 · 算法细节（大多数情况用不到）</summary>
+            <div class="advanced-grid">
+              <label>聚类算法<select id="cluster-picker"><option value="kmeans">K-means</option><option value="dbscan">DBSCAN</option></select></label>
+              <label>路径算法<select id="route-picker"><option value="greedy">贪心最近邻</option><option value="dp">动态规划 Held-Karp</option></select></label>
+              <p class="advanced-hint">只有把「路线风格」设为自定义时，这里的选择才生效。K-means 按距离把景点分成若干片；DBSCAN 会把相近的景点聚成一团、孤立点单独成组；DP 是一天内顺序最优，贪心是每次走最近的下一站。</p>
+            </div>
+          </details>
         </form><div id="plan-result" class="result-wrap"></div>
       </div>
     </main>
@@ -97,6 +114,6 @@
   </div>
 </div>
 <script src="/static/vendor/leaflet/leaflet.js" defer></script>
-<script src="/static/app.js?v=20261125-8" defer></script>
+<script src="/static/app.js?v=20261125-9" defer></script>
 </body>
 </html>

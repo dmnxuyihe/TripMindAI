@@ -73,3 +73,14 @@
 .tl-meal .tl-label{color:#a3723a}
 .tl-visit .tl-label{font-weight:600;color:#2c3a35}
 .unscheduled-card{border-style:dashed;border-color:#e8d9c4;background:#fffdf8}
+
+/* 高级选项折叠区 */
+.advanced-options{grid-column:1/-1;border:1px dashed #e3e9e6;border-radius:12px;padding:12px 14px;background:#fbfdfc}
+.advanced-options summary{cursor:pointer;color:#6d7a74;font-size:12px;font-weight:600;list-style:none}
+.advanced-options summary::-webkit-details-marker{display:none}
+.advanced-options summary::before{content:'▸ ';color:#8ba79b}
+.advanced-options[open] summary::before{content:'▾ '}
+.advanced-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px}
+.advanced-hint{grid-column:1/-1;margin:0;color:#9aa6a0;font-size:11px;line-height:1.7}
+.form-card select:disabled{opacity:.55;cursor:not-allowed}
+@media(max-width:820px){.advanced-grid{grid-template-columns:1fr}}
