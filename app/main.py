@@ -145,7 +145,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.4.3', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.4.4', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -171,7 +171,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.4.3', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.4.4', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -251,6 +251,9 @@ def create_app(settings: Settings | None = None, engine=None):
         normalize_choice(payload.pace, ('relaxed', 'normal', 'packed'), '节奏')
         if not re.fullmatch(r'([01]?\d|2[0-3]):[0-5]\d', payload.day_start.strip()):
             raise HTTPException(422, '每天出发时间格式应为 HH:MM（例如 09:00）')
+        start_hour, start_minute = (int(part) for part in payload.day_start.strip().split(':'))
+        if start_hour * 60 + start_minute >= 17 * 60:
+            raise HTTPException(422, '每天出发时间太晚（需早于 17:00），否则当天没有可安排的时间窗')
         with Session() as db:
             try:
                 return build_live_plan(db, settings, payload.city.strip(), payload.origin.strip(), payload.days,

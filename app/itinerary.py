@@ -77,8 +77,17 @@ def visit_hours(spot: dict) -> float:
         return DEFAULT_VISIT_HOURS
 
 
+def _usable(spot) -> bool:
+    """景点至少要能定位，否则无法参与排程。"""
+    return isinstance(spot, dict) and spot.get('lat') is not None and spot.get('lon') is not None
+
+
 def travel_minutes(a: dict | None, b: dict) -> tuple[int, str]:
-    """估算两点间交通时间，返回（分钟，方式）。"""
+    """估算两点间交通时间，返回（分钟，方式）。坐标缺失时给保守估计。"""
+    if a is not None and not _usable(a):
+        a = None
+    if not _usable(b):
+        return 10, '驾车'
     if not a:
         return 0, '起点'
     distance = _haversine(a, b)
@@ -150,7 +159,13 @@ def _plan_day(spots, start, end, budget_minutes, max_spots, center=None, travel_
     lunch_done = False
     previous = center if center else None
 
+    invalid = []
     for index, spot in enumerate(spots):
+        if not _usable(spot):
+            invalid.append(spot if isinstance(spot, dict) else {'name': '数据不完整的景点'})
+            continue
+        if not spot.get('name'):
+            spot['name'] = '未命名景点'
         if len(placed) >= max_spots:
             leftover = spots[index:]
             break
@@ -212,7 +227,7 @@ def _plan_day(spots, start, end, budget_minutes, max_spots, center=None, travel_
         'spare_hours': round(max(0, budget_minutes - visit_total - travel_total) / 60, 1),
         'spot_count': len(placed),
     }
-    return placed, timeline, load, leftover
+    return placed, timeline, load, leftover + invalid
 
 
 def apply_schedule(plan: dict, pace: str = DEFAULT_PACE,
