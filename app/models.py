@@ -63,6 +63,17 @@ class Defect(Base):
 
 Index('ix_conversations_updated', Conversation.updated_at)
 
+class Itinerary(Base):
+    """保存下来的行程，用于分享链接。"""
+    __tablename__ = 'itineraries'
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False, default='未命名行程')
+    city: Mapped[str] = mapped_column(String(50), nullable=False, default='')
+    days: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 class PoiCache(Base):
     """Isolated from teaching fixtures: real AMap points only."""
     __tablename__ = 'amap_poi_cache'

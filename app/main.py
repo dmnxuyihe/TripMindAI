@@ -1,10 +1,10 @@
 """FastAPI app factory: 前端、对话、行程、算法、缺陷跟踪。"""
 from __future__ import annotations
 import json
+import logging
 import os
 import re
 import queue
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import time
 from datetime import timedelta, timezone
@@ -17,11 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import case, func, select, text
 from .config import Settings
 from .agent import AgentError, run_agent
-from .amap import MapError, walking_route
+from .amap import MapError
+from .itinerary import DEFAULT_DAY_END, DEFAULT_DAY_START, apply_schedule
+from .legs import prefetch as prefetch_legs
 from .geo import add_wgs84_fields
 from .dynamic_planning import build_live_plan, benchmark_live
 from .planning import comparison_from_db
-from .models import Attraction, ChatMessage, Conversation, Defect, utcnow
+from .models import Attraction, ChatMessage, Conversation, Defect, Itinerary, utcnow
 from .storage import list_cities, make_engine, setup_database
 
 STATIC = Path(__file__).parent / 'static'
@@ -48,6 +50,7 @@ class PlanInput(BaseModel):
     pace: str = Field(default='relaxed', max_length=16)
     spot_ids: list[str] = Field(default_factory=list, max_length=16)
     day_start: str = Field(default='09:00', max_length=5)
+    lodging: str = Field(default='', max_length=80)
     spot_names: list[str] = Field(default_factory=list, max_length=16)
     origin: str = Field(default='上海', max_length=50)
     days: int = Field(ge=1, le=7)
@@ -80,6 +83,21 @@ class RouteGeometryInput(BaseModel):
     segments: list[RouteSegment] = Field(default_factory=list, max_length=16)
 
 leg_geometry_cache: dict[tuple, tuple] = {}
+
+
+class ItineraryInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    title: str = Field(default='我的行程', max_length=120)
+    plan: dict
+
+
+class PlanEditInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    plan: dict
+    op: str = Field(max_length=16)
+    day: int = Field(ge=1, le=7)
+    spot_id: str | None = Field(default=None, max_length=80)
+    spot: dict | None = None
 
 
 def iso(dt):
@@ -120,10 +138,21 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.3.5', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.4.0', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
+
+    @app.middleware('http')
+    async def log_requests(request, call_next):
+        started = time.monotonic()
+        response = await call_next(request)
+        cost_ms = (time.monotonic() - started) * 1000
+        if request.url.path.startswith('/api/'):
+            logging.getLogger('tripmind.access').info(
+                '%s %s -> %s %.0fms', request.method, request.url.path, response.status_code, cost_ms)
+        response.headers['X-Response-Time-ms'] = f'{cost_ms:.0f}'
+        return response
     app.mount('/static', StaticFiles(directory=STATIC), name='static')
 
     @app.get('/')
@@ -135,7 +164,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.3.5', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.4.0', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -206,7 +235,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 return build_live_plan(db, settings, payload.city.strip(), payload.origin.strip(), payload.days,
                     clustering=payload.clustering, routing=payload.routing, pace=payload.pace,
                     spot_ids=payload.spot_ids, spot_names=payload.spot_names,
-                    day_start=payload.day_start.strip())
+                    day_start=payload.day_start.strip(), lodging=payload.lodging.strip() or None)
             except (ValueError, MapError) as exc:
                 raise HTTPException(422, str(exc)) from exc
 
@@ -394,103 +423,108 @@ def create_app(settings: Settings | None = None, engine=None):
 
     @app.post('/api/route-geometry')
     def route_geometry(payload: RouteGeometryInput):
-        """并发获取相邻景点之间的步行道路折线。
+        """返回相邻景点之间的道路折线与通行时间。
 
-        地图先按直线渲染，本接口返回后再把线替换成真实道路轨迹；
-        单段失败或超时就保持直线，不影响行程本身。高德该接口会间歇性卡顿，
-        因此每条请求单独限时，并对成功结果做进程内缓存。
+        与排程共用 app/legs.py 的缓存：地图上看到的耗时与时间轴一致。
+        取不到折线的段返回 path=None，前端按直线处理。
         """
+        if not payload.segments:
+            return {'legs': [], 'note': '没有需要取轨迹的相邻景点。'}
         if not settings.amap_api_key:
             raise HTTPException(status_code=422, detail='缺少 AMAP_WEB_KEY，无法获取道路轨迹。')
-        segments = payload.segments
-        if not segments:
-            return {'legs': [], 'note': '没有需要取轨迹的相邻景点。'}
-
-        budget = max(2.0, settings.amap_legs_budget_seconds)
-        # 单段限时压到 4 秒：高德偶发 10~20 秒的卡顿直接放弃，用直线兜底
-        per_call = max(1.5, min(3.0, settings.amap_timeout_seconds))
-        results = [None] * len(segments)
-
-        def cache_key(seg):
-            return (round(seg.start[0], 4), round(seg.start[1], 4),
-                    round(seg.end[0], 4), round(seg.end[1], 4))
-
-        def fetch(index):
-            seg = segments[index]
-            key = cache_key(seg)
-            cached = leg_geometry_cache.get(key)
-            if cached and time.time() - cached[0] < 6 * 3600:
-                return cached[1]
-            try:
-                route = walking_route({'lon': seg.start[0], 'lat': seg.start[1]},
-                                      {'lon': seg.end[0], 'lat': seg.end[1]},
-                                      key=settings.amap_api_key, timeout=per_call)
-            except MapError:
-                return None
-            if route and route.get('path'):
-                leg_geometry_cache[key] = (time.time(), route)
-                return route
-            return None
-
-        cached_count = sum(1 for seg in segments
-                           if leg_geometry_cache.get(cache_key(seg))
-                           and time.time() - leg_geometry_cache[cache_key(seg)][0] < 6 * 3600)
-        pending = [i for i in range(len(segments))
-                   if not (leg_geometry_cache.get(cache_key(segments[i]))
-                           and time.time() - leg_geometry_cache[cache_key(segments[i])][0] < 6 * 3600)]
-        for i in range(len(segments)):
-            if i not in pending:
-                results[i] = leg_geometry_cache[cache_key(segments[i])][1]
-
-        if pending:
-            pool = ThreadPoolExecutor(max_workers=min(6, len(pending)))
-            futures = {pool.submit(fetch, i): i for i in pending}
-            try:
-                for future in as_completed(futures, timeout=budget):
-                    index = futures[future]
-                    try:
-                        results[index] = future.result()
-                    except Exception:
-                        results[index] = None
-            except TimeoutError:
-                pass
-            finally:
-                # 不等卡住的请求：超时的那几段直接按直线处理
-                pool.shutdown(wait=False, cancel_futures=True)
-
-            # 第二轮：对仍然缺失的段在剩余预算内再试一次（缩容并发，避免又拖满）
-            retry = [i for i, route in enumerate(results) if not (route and route.get('path'))]
-            if retry and time.monotonic() < deadline + budget:
-                pool2 = ThreadPoolExecutor(max_workers=min(3, len(retry)))
-                futures2 = {pool2.submit(fetch, i): i for i in retry}
-                try:
-                    for future in as_completed(futures2, timeout=max(1.5, budget / 2)):
-                        index = futures2[future]
-                        try:
-                            results[index] = future.result()
-                        except Exception:
-                            pass
-                except TimeoutError:
-                    pass
-                finally:
-                    pool2.shutdown(wait=False, cancel_futures=True)
-
+        pairs = [({'lon': seg.start[0], 'lat': seg.start[1]},
+                  {'lon': seg.end[0], 'lat': seg.end[1]}) for seg in payload.segments]
+        fetched = prefetch_legs(pairs, settings=settings,
+                                budget_seconds=settings.amap_legs_budget_seconds)
         legs = []
-        for index, route in enumerate(results):
-            if route and route.get('path'):
-                legs.append({'index': index, 'path': route['path'],
-                             'distance_m': route.get('distance_m', 0),
-                             'duration_s': route.get('duration_s', 0), 'source': 'walking'})
+        for index, (start_point, end_point) in enumerate(pairs):
+            key = (round(start_point['lon'], 4), round(start_point['lat'], 4),
+                   round(end_point['lon'], 4), round(end_point['lat'], 4))
+            hit = fetched.get(key)
+            if hit and hit[3]:
+                legs.append({'index': index, 'path': hit[3], 'minutes': hit[0],
+                             'mode': hit[1], 'source': hit[2]})
             else:
                 legs.append({'index': index, 'path': None, 'source': 'straight'})
-        routed = sum(1 for leg in legs if leg['source'] == 'walking')
-        if routed == len(legs):
-            note = f'共 {len(legs)} 段景点间路线均取得高德步行道路轨迹。'
-        else:
-            note = f'共 {len(legs)} 段景点间路线，{routed} 段取得高德步行道路轨迹；其余为直线估计。'
-        if cached_count:
-            note += f'（其中 {cached_count} 段来自缓存）'
+        routed = sum(1 for leg in legs if leg['source'] != 'straight')
+        note = f'共 {len(legs)} 段景点间路线，{routed} 段取得高德道路轨迹（耗时与时间轴一致）；其余为直线估计。'
         return {'legs': legs, 'note': note}
+
+    @app.post('/api/itineraries', status_code=201)
+    def save_itinerary(payload: ItineraryInput):
+        plan = payload.plan or {}
+        daily = plan.get('daily')
+        if not isinstance(daily, list) or not daily:
+            raise HTTPException(422, '没有可保存的行程内容')
+        if not all(isinstance(day, dict) and isinstance(day.get('spots'), list) for day in daily):
+            raise HTTPException(422, '行程结构不合法（daily 必须是含 spots 列表的对象数组）')
+        obj = Itinerary(id=str(uuid4()), title=payload.title.strip() or '我的行程',
+                        city=str(plan.get('city') or '')[:50], days=int(plan.get('days') or len(plan['daily'])),
+                        payload=json.dumps(plan, ensure_ascii=False, default=str))
+        with Session.begin() as db:
+            db.add(obj)
+        return {'id': obj.id, 'url': f'/?trip={obj.id}', 'title': obj.title}
+
+    @app.get('/api/itineraries')
+    def list_itineraries(limit: int = Query(default=30, ge=1, le=100)):
+        with Session() as db:
+            rows = db.scalars(select(Itinerary).order_by(Itinerary.created_at.desc()).limit(limit)).all()
+        return {'itineraries': [{'id': r.id, 'title': r.title, 'city': r.city, 'days': r.days,
+                                 'created_at': iso(r.created_at)} for r in rows]}
+
+    @app.get('/api/itineraries/{itinerary_id}')
+    def get_itinerary(itinerary_id: str):
+        with Session() as db:
+            obj = db.get(Itinerary, itinerary_id)
+            if obj is None:
+                raise HTTPException(404, '行程不存在或已被删除')
+            return {'id': obj.id, 'title': obj.title, 'city': obj.city,
+                    'created_at': iso(obj.created_at), 'plan': json.loads(obj.payload)}
+
+    @app.delete('/api/itineraries/{itinerary_id}')
+    def delete_itinerary(itinerary_id: str):
+        with Session.begin() as db:
+            obj = db.get(Itinerary, itinerary_id)
+            if obj is None:
+                raise HTTPException(404, '行程不存在或已被删除')
+            db.delete(obj)
+        return {'deleted': True}
+
+    @app.post('/api/plan/edit')
+    def edit_plan(payload: PlanEditInput):
+        """微调：把某个景点从某天移除，或把未排入的景点加进某天，然后重新排程。"""
+        plan = dict(payload.plan or {})
+        daily = plan.get('daily') or []
+        if not daily:
+            raise HTTPException(422, '缺少行程数据')
+        index = payload.day - 1
+        if index < 0 or index >= len(daily):
+            raise HTTPException(422, '天数超出范围')
+        day = dict(daily[index])
+        spots = list(day.get('spots') or [])
+        if payload.op == 'remove':
+            target = [s for s in spots if str(s.get('id')) == str(payload.spot_id)]
+            if not target:
+                raise HTTPException(404, '这一天的行程里没有该景点')
+            spots = [s for s in spots if str(s.get('id')) != str(payload.spot_id)]
+            plan.setdefault('unscheduled', []).insert(
+                0, {'name': target[0].get('name'), 'reason': '手动移除'})
+        elif payload.op == 'add':
+            spot = payload.spot or {}
+            if spot.get('lat') is None or spot.get('lon') is None:
+                raise HTTPException(422, '景点缺少坐标，无法加入行程')
+            spots.append(spot)
+            plan['unscheduled'] = [u for u in (plan.get('unscheduled') or [])
+                                   if u.get('name') != spot.get('name')]
+        else:
+            raise HTTPException(422, '不支持的操作')
+        day['spots'] = spots
+        daily[index] = day
+        plan['daily'] = daily
+        plan = apply_schedule(plan, plan.get('pace') or 'relaxed',
+                              plan.get('day_start') or DEFAULT_DAY_START,
+                              DEFAULT_DAY_END)
+        return plan
 
     @app.get('/api/defects')
     def defects():

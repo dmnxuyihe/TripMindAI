@@ -30,16 +30,31 @@ DRIVE_OVERHEAD_MIN = 5           # 上下车/找停车位
 WALK_MAX_KM = 2.5                # 超过这个距离就不建议步行
 
 # 景点类型 → 建议游览时长（小时）。命中越靠前的越优先。
+# 顺序很重要：先判具体类型（寺/庙），再判宽泛的“山/景区”，
+# 否则「寒山寺」会因为名字里带“山”被当成 3.5 小时的大景区。
 VISIT_HOURS = (
+    # 更具体的词必须排在更宽泛的词前面，否则「森林公园」会被「公园」截获
+    (('森林公园', '地质公园'), 3.5),
+    (('寺', '庙', '教堂', '道观', '宫'), 1.0),
     (('博物馆', '美术馆', '展览馆', '纪念馆'), 2.0),
-    (('山', '风景区', '森林公园', '地质公园'), 3.5),
-    (('湖', '湿地'), 2.0),
-    (('园林', '公园', '植物园'), 1.5),
-    (('古镇', '古街', '历史文化街区'), 1.5),
-    (('寺', '庙', '教堂', '道观'), 1.0),
-    (('商业街', '步行街', '购物'), 0.8),
+    (('园林', '古典园林'), 1.5),
+    (('古镇', '古街', '历史文化街区', '街区'), 1.5),
+    (('商业街', '步行街', '购物中心'), 0.8),
+    (('风景区', '景区', '山'), 3.5),
+    (('公园', '植物园', '湿地', '湖'), 2.0),
 )
 DEFAULT_VISIT_HOURS = 1.5
+
+# 高德多数 POI 不给营业时间，这里按类型给一个保守的默认时段，
+# 并在时间轴上标注“按类型估算”，与真实营业时间区分开。
+DEFAULT_OPEN_HOURS = (
+    (('博物馆', '美术馆', '展览馆', '纪念馆'), (9 * 60, 17 * 60)),
+    (('寺', '庙', '教堂', '道观'), (7 * 60, 17 * 60)),
+    (('园林',), (7 * 60 + 30, 17 * 60 + 30)),
+    (('商业街', '步行街', '购物中心'), (10 * 60, 22 * 60)),
+    (('风景区', '景区', '公园', '山'), (8 * 60, 18 * 60)),
+)
+DEFAULT_OPEN_FALLBACK = (9 * 60, 18 * 60)
 
 
 def _haversine(a: dict, b: dict) -> float:
@@ -76,6 +91,32 @@ def travel_minutes(a: dict | None, b: dict) -> tuple[int, str]:
     return max(5, int(round(minutes / 5.0)) * 5), mode
 
 
+def window_of(spot):
+    """返回 (open_min, close_min, source)；source = real / estimated / none。"""
+    open_min = spot.get('open_min')
+    close_min = spot.get('close_min')
+    if isinstance(open_min, int) and isinstance(close_min, int) and close_min > open_min:
+        return open_min, close_min, 'real'
+    text = ' '.join(str(t) for t in (spot.get('tags') or [])) + ' ' + str(spot.get('name') or '')
+    for keywords, (start, close) in DEFAULT_OPEN_HOURS:
+        if any(word in text for word in keywords):
+            return start, close, 'estimated'
+    start, close = DEFAULT_OPEN_FALLBACK
+    return start, close, 'estimated'
+
+
+def _travel(a, b, travel_lookup=None):
+    """优先用真实通行时间（高德路径），没有就用直线估算。"""
+    if travel_lookup is not None and a is not None:
+        try:
+            hit = travel_lookup(a, b)
+        except Exception:
+            hit = None
+        if hit:
+            return int(hit[0]), hit[1]
+    return travel_minutes(a, b)
+
+
 def _parse_hm(value: str) -> int:
     try:
         hour, minute = str(value).split(':')[:2]
@@ -89,7 +130,7 @@ def _fmt(minutes: int) -> str:
     return f'{minutes // 60:02d}:{minutes % 60:02d}'
 
 
-def _plan_day(spots, start, end, budget_minutes, max_spots, center=None):
+def _plan_day(spots, start, end, budget_minutes, max_spots, center=None, travel_lookup=None):
     """按时间窗把一天的景点装进去，返回（已排景点、时间轴、负荷、剩余景点）。"""
     cursor = start
     placed, timeline, leftover = [], [], []
@@ -101,10 +142,20 @@ def _plan_day(spots, start, end, budget_minutes, max_spots, center=None):
         if len(placed) >= max_spots:
             leftover = spots[index:]
             break
-        leg, mode = travel_minutes(previous, spot)
+        leg, mode = _travel(previous, spot, travel_lookup)
         arrive = cursor + leg
         hours = visit_hours(spot)
         duration = int(round(hours * 60))
+        # 营业时间：未开门就顺延等待；会超出闭门时间则只提示，不强行丢弃
+        warning = ''
+        open_min, close_min, hours_source = window_of(spot)
+        wait = 0
+        if arrive < open_min:
+            wait = open_min - arrive
+            arrive = open_min
+        if arrive + duration > close_min:
+            suffix = '' if hours_source == 'real' else '（按类型估算）'
+            warning = f'预计 {_fmt(close_min)} 关门{suffix}，这个安排可能超出营业时间'
 
         # 午饭：如果这趟游览会跨过中午，就在它之前安排 1 小时午餐
         # 只在中午前后（11:30–13:30 到达）才安插午饭；下午出发就不插了
@@ -128,8 +179,12 @@ def _plan_day(spots, start, end, budget_minutes, max_spots, center=None):
             timeline.append({'kind': 'travel', 'start': _fmt(cursor), 'end': _fmt(arrive),
                              'label': f'{mode}前往 {spot["name"]}', 'minutes': leg, 'mode': mode})
             travel_total += leg
+        if wait:
+            timeline.append({'kind': 'wait', 'start': _fmt(arrive - wait), 'end': _fmt(arrive),
+                             'label': f'等待 {spot["name"]} 开门', 'minutes': wait})
         timeline.append({'kind': 'visit', 'start': _fmt(arrive), 'end': _fmt(arrive + duration),
-                         'label': spot['name'], 'minutes': duration, 'hours': round(duration / 60, 1)})
+                         'label': spot['name'], 'minutes': duration, 'hours': round(duration / 60, 1),
+                         **({'warning': warning} if warning else {})})
         visit_total += duration
         cursor = arrive + duration
         if cursor >= LUNCH_AFTER:
@@ -151,7 +206,7 @@ def _plan_day(spots, start, end, budget_minutes, max_spots, center=None):
 def apply_schedule(plan: dict, pace: str = DEFAULT_PACE,
                    day_start: str = DEFAULT_DAY_START,
                    day_end: str = DEFAULT_DAY_END,
-                   extra_unscheduled=()) -> dict:
+                   extra_unscheduled=(), travel_lookup=None) -> dict:
     """给已生成的分日行程套上时间表，装不下的景点进入 unscheduled。"""
     preset = PACE_PRESETS.get(pace) or PACE_PRESETS[DEFAULT_PACE]
     start, end = _parse_hm(day_start), _parse_hm(day_end)
@@ -170,12 +225,14 @@ def apply_schedule(plan: dict, pace: str = DEFAULT_PACE,
         for spot in candidates:
             if spot in pool:
                 pool.remove(spot)
-        placed, timeline, load, overflow = _plan_day(candidates, start, end, budget, max_spots, center)
+        placed, timeline, load, overflow = _plan_day(candidates, start, end, budget, max_spots, center,
+                                                     travel_lookup=travel_lookup)
         leftovers.extend(overflow)
         scheduled_days.append({'placed': placed, 'timeline': timeline, 'load': load})
 
     def rebuild(placed):
-        return _plan_day(placed, start, end, budget, max_spots, center)
+        return _plan_day(placed, start, end, budget, max_spots, center,
+                         travel_lookup=travel_lookup)
 
     # 第二遍：落选景点直接塞进还有余量的天
     for spot in list(leftovers):
@@ -244,20 +301,30 @@ def apply_schedule(plan: dict, pace: str = DEFAULT_PACE,
     recommended_days = max(1, math.ceil(required_hours / per_day_budget)) if per_day_budget else day_count
 
     plan['pace'] = pace
+    plan['day_start'] = day_start
     plan['pace_label'] = preset['label']
     plan['day_window'] = f'{day_start}–{day_end}'
     plan['daily_max_spots'] = max_spots
     plan['spot_count'] = total_scheduled
     plan['total_distance_km'] = round(sum(d.get('distance_km') or 0 for d in plan.get('daily') or []), 2)
-    plan['unscheduled'] = [{'name': s.get('name'), 'reason': '超出每日时间预算'} for s in leftovers]
+    scheduled_names = {s.get('name') for day in plan.get('daily') or []
+                       for s in (day.get('spots') or [])}
+    overflow_names = {s.get('name') for s in leftovers}
+    # 合并调用方已有的未排入条目（例如手动移除的景点），避免重新排程时被整体覆盖
+    manual = [u for u in (plan.get('unscheduled') or [])
+              if isinstance(u, dict) and u.get('name')
+              and u['name'] not in scheduled_names
+              and u['name'] not in overflow_names]
+    plan['unscheduled'] = ([{'name': s.get('name'), 'reason': '超出每日时间预算'} for s in leftovers]
+                           + manual)
     plan['capacity'] = {
         'required_hours': round(required_hours, 1),
         'available_hours': round(available_hours, 1),
         'scheduled_hours': round(scheduled_hours, 1),
         'recommended_days': recommended_days,
-        'total_spots': total_scheduled + len(leftovers),
+        'total_spots': total_scheduled + len(plan['unscheduled']),
         'scheduled_spots': total_scheduled,
-        'unscheduled_spots': len(leftovers),
+        'unscheduled_spots': len(plan['unscheduled']),
     }
     if leftovers:
         plan['capacity_note'] = (

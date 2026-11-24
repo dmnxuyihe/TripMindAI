@@ -1,0 +1,3 @@
+# 测试运行期间自建的工作目录（沙箱下不能用 tempfile/tmp_path）
+.tmp/
+__pycache__/

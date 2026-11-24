@@ -145,3 +145,12 @@ CREATE TABLE IF NOT EXISTS amap_poi_cache (
 );
 CREATE INDEX IF NOT EXISTS ix_amap_poi_cache_city ON amap_poi_cache(city);
 CREATE INDEX IF NOT EXISTS ix_amap_poi_cache_keyword ON amap_poi_cache(keyword);
+
+CREATE TABLE IF NOT EXISTS itineraries (
+  id varchar(36) PRIMARY KEY,
+  title varchar(120) NOT NULL DEFAULT '未命名行程',
+  city varchar(50) NOT NULL DEFAULT '',
+  days integer NOT NULL DEFAULT 1,
+  payload text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);

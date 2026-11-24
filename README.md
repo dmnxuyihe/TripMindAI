@@ -94,6 +94,9 @@ TripMindAI/
 │  ├─ agent.py             # 模型 function calling；模型自主选择工具，含总时间预算
 │  ├─ amap.py              # 真实高德 POI/地理编码/驾车适配器，可注入 HTTP 客户端
 │  ├─ dynamic_planning.py  # 真实 POI → 缓存 → 聚类/排序；跨城查询带独立时间预算
+│  ├─ itinerary.py       # 时间预算排程：游览时长/交通/营业时间/午餐/未排入清单
+│  ├─ legs.py            # 路段耗时与道路折线的统一缓存（排程与地图共用）
+│  ├─ geo.py             # GCJ-02 → WGS-84 坐标纠偏
 │  ├─ travel_core.py       # K-means/DBSCAN/贪心/Held-Karp 纯算法
 │  ├─ models.py            # SQLAlchemy 表定义（5 张表）
 │  ├─ storage.py           # 引擎与会话工厂、幂等建表与教学数据导入
@@ -114,13 +117,26 @@ TripMindAI/
 └─ start.bat / start.sh    # 日常启动（跳过初始化）
 ```
 
+## 6.1 行程真实性
+
+- **游览时长按类型估算**（博物馆 2h、寺庙 1h、园林 1.5h、商业街 0.8h、大景区 3.5h），不再一律 1.5 小时；
+- **交通时间用高德路径**（步行 ≤2.5km、更远驾车），排程与地图共用缓存，两个地方看到的时间一致；
+- **营业时间**：高德有 `business.opentime` 就用真实时段，没有则按类型给保守默认值并在提示里标注“按类型估算”；计划安排在关门之后会给出 ⚠ 提示，但不会静默丢弃景点；
+- **节奏与时间窗**：休闲 3 个/6h（默认）、标准 4 个/7.5h、紧凑 5 个/8.5h；出发时间可设置为任意 HH:MM，时间窗随之后移；
+- **住宿地**：填了 `lodging` 时每天从该处出发（会先地理编码），跨城段仍单独处理；
+- **排不下的景点**进入 `unscheduled`，并给出“建议至少安排 N 天”与容量账本。
+
 > **自动化测试现状**：`pytest.ini` 与 `requirements-dev.txt`（pytest、ruff）已就绪，但仓库目前**尚未包含 `tests/` 目录**，因此 `pytest` 暂时收集不到用例。测试用例将在课程测试阶段补充。
 
 ## 5. API 概览
 
-- `GET /api/health`、`GET /api/models`、`GET /api/docs`
+- `GET /api/health`、`GET /api/models`、`GET /api/docs`、`GET /api/map-config`（下发给前端的地图配置）
 - `GET /api/cities`、`GET /api/attractions?city=...`：返回 `found` 标记，未收录城市返回空列表与 `note` 说明
-- `POST /api/plan`：高德 + 算法直接结构化规划；跨城数据超预算时省略并给出 `intercity_note`
+- `GET /api/pois?city=...`：候选景点（含营业时间、纠偏坐标），供用户勾选后再规划
+- `POST /api/plan`：结构化规划。支持 `pace`（休闲/标准/紧凑）、`day_start`、`lodging`（住宿地）、`spot_ids`/`spot_names`（自选景点）；跨城数据超预算时省略并给出 `intercity_note`
+- `POST /api/plan/edit`：行程微调（`op=remove` 把景点移出某天，`op=add` 把未排入的景点加回），按原节奏与时间窗重新排程
+- `POST /api/route-geometry`：相邻景点的道路折线与通行时间；与排程共用同一份缓存，保证时间轴和地图口径一致
+- `POST /api/itineraries`、`GET /api/itineraries`、`GET/DELETE /api/itineraries/{id}`：保存行程并生成分享链接（`/?trip=<id>` 直接打开）
 - `GET /api/benchmark?city=...&days=...`：真实高德 POI 上的算法对比
 - `GET /api/benchmark-fixture?city=...&days=...`：100 条本地教学景点上的确定性对比（未收录城市返回空 `rows` 与 `note`）
 - `POST /api/chat`：真实模型 function calling，回复中 `tool_trace` 标明模型选了什么工具，`context_note` 标明上下文是否被裁剪

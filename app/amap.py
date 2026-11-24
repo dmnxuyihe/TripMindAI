@@ -3,6 +3,7 @@
 No synthetic locations are returned when AMap fails. Coordinates are GCJ-02.
 """
 from __future__ import annotations
+import re
 import time
 from urllib.parse import urlencode
 import httpx
@@ -58,6 +59,51 @@ def _get(path: str, params: dict, *, key: str, timeout: float = 12, client=None)
         raise MapError('高德返回了无法解析的 JSON') from exc
 
 
+def parse_opentime(raw):
+    """从高德 business.opentime 里提取开门/关门时间（分钟）。
+
+    高德返回格式不统一（"周一至周日 08:30-17:00"、"09:00-17:00"、"24小时营业" 等），
+    这里只做保守解析：拿到第一个时间段即可，解析不出来就返回 None，不做猜测。
+    """
+    text = str(raw or '')
+    if not text:
+        return None
+    if '24小时' in text or '全天' in text:
+        return {'open_min': 0, 'close_min': 23 * 60 + 59}
+    match = re.search(r'(\d{1,2}):(\d{2})\s*[-~～至到]\s*(\d{1,2}):(\d{2})', text)
+    if not match:
+        return None
+    open_min = int(match.group(1)) * 60 + int(match.group(2))
+    close_min = int(match.group(3)) * 60 + int(match.group(4))
+    if close_min <= open_min:
+        return None
+    return {'open_min': open_min, 'close_min': close_min}
+
+
+def _dedupe(spots):
+    """同名或相距过近的 POI 去重，避免同一景点出现两次。"""
+    kept = []
+    for spot in spots:
+        name = str(spot.get('name') or '').replace(' ', '')
+        duplicate = False
+        for other in kept:
+            other_name = str(other.get('name') or '').replace(' ', '')
+            if name and (name == other_name or name in other_name or other_name in name):
+                duplicate = True
+                break
+            try:
+                near = (abs(float(spot['lat']) - float(other['lat'])) < 0.001
+                        and abs(float(spot['lon']) - float(other['lon'])) < 0.001)
+            except (KeyError, TypeError, ValueError):
+                near = False
+            if near:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(spot)
+    return kept
+
+
 def search_pois(city: str, *, keyword: str = '景点', limit: int = 16, key: str, timeout: float = 12, client=None):
     city = city.strip()[:50]
     keyword = keyword.strip()[:65] or '景点'
@@ -79,15 +125,21 @@ def search_pois(city: str, *, keyword: str = '景点', limit: int = 16, key: str
         pic = photos[0].get('url', '') if photos and isinstance(photos[0], dict) else ''
         if not str(pic).startswith('https://'):
             pic = ''
+        business = p.get('business') if isinstance(p.get('business'), dict) else {}
+        opentime_raw = str(business.get('opentime') or '').strip()
+        opened = parse_opentime(opentime_raw)
         result.append({
             'id': f'amap:{str(p["id"])[:64]}', 'city': city, 'name': str(p['name'])[:100],
+            'opentime': opentime_raw,
+            'open_min': (opened or {}).get('open_min'),
+            'close_min': (opened or {}).get('close_min'),
             **loc, 'tags': [str(p.get('type', '')).split(';')[0][:40] or '景点'],
             'description': f"地址：{str(p.get('address') or p.get('adname') or '未提供')[:110]}。来源：高德地图 POI。",
             'address': str(p.get('address') or '')[:150], 'duration_hours': 1.5,
             'photo_url': pic, 'photo_credit': '高德地图 POI', 'photo_source': '',
             'source': 'amap', 'adcode': str(p.get('adcode') or '')[:12]
         })
-    return result
+    return _dedupe(result)
 
 
 def _parse_polyline(text):
