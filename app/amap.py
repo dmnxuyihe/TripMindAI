@@ -42,7 +42,10 @@ def _get(path: str, params: dict, *, key: str, timeout: float = 12, client=None)
         if client is not None:
             response = client.get(BASE + path, params={**params, 'key': key})
         else:
-            with httpx.Client(timeout=timeout, follow_redirects=False) as local:
+            # httpx 的浮点超时对连接/读取分别生效，极端情况下会叠加成两倍；
+            # 这里把连接阶段单独压到 2 秒，避免慢握手把整体预算吃光。
+            limits = httpx.Timeout(float(timeout), connect=min(2.0, float(timeout)))
+            with httpx.Client(timeout=limits, follow_redirects=False) as local:
                 response = local.get(BASE + path, params={**params, 'key': key})
         response.raise_for_status()
         data = response.json()

@@ -266,7 +266,7 @@ for(const day of plan.daily){const card=node('section','day-card');add(card,node
 if(plan.unscheduled&&plan.unscheduled.length){const box=node('section','day-card unscheduled-card');box.appendChild(node('h3','','未排入的景点'));box.appendChild(node('div','day-meta',plan.capacity_note||'超出每日时间预算，建议增加天数'));const list=node('div','spot-list');plan.unscheduled.forEach(function(s){list.appendChild(node('span','spot-pill',s.name));});box.appendChild(list);wrap.appendChild(box);}
 if(plan.intercity_route){const r=plan.intercity_route;const card=node('section','day-card');add(card,node('h3','',`跨城市路线示意 · ${r.origin} → ${r.destination}`),node('div','day-meta',r.driving_distance_km!==undefined?`高德驾车 ${r.driving_distance_km} km · 估计 ${r.driving_duration_min} 分钟（不含实时路况）`:`两地直线距离约 ${r.straight_km} km，非高铁/驾车里程`));const panel=node('div','route-graphic');panel.appendChild(mapPlaceholder('正在计算跨城路线…'));card.appendChild(panel);wrap.appendChild(card);pendingMaps.push({panel:panel,kind:'intercity',r:r});}
 if(all.length){const panel=node('div','route-graphic');panel.appendChild(mapPlaceholder('正在计算沿道路路线…'));wrap.appendChild(panel);pendingMaps.push({panel:panel,kind:'daily',days:plan.daily});}
-if(!plan.intercity_route&&plan.intercity_note){wrap.appendChild(node('div','note',plan.intercity_note));}if(plan.capacity_note&&!(plan.unscheduled&&plan.unscheduled.length))wrap.appendChild(node('div','note',plan.capacity_note));if(plan.route_note)wrap.appendChild(node('div','note',plan.route_note));wrap.appendChild(node('div','note',plan.map_note||plan.distance_note));if(compact)wrap.style.marginTop='20px';target.appendChild(wrap);if(pendingMaps.length)fillMaps(pendingMaps);
+if(!plan.intercity_route&&plan.intercity_note){wrap.appendChild(node('div','note',plan.intercity_note));}if(plan.capacity_note&&!(plan.unscheduled&&plan.unscheduled.length))wrap.appendChild(node('div','note',plan.capacity_note));if(plan.selection_note)wrap.appendChild(node('div','note',plan.selection_note));if(plan.route_note)wrap.appendChild(node('div','note',plan.route_note));wrap.appendChild(node('div','note',plan.map_note||plan.distance_note));if(compact)wrap.style.marginTop='20px';target.appendChild(wrap);if(pendingMaps.length)fillMaps(pendingMaps);
 }
 async function loadModels(){const data=await api('/api/models');state.models=data.models;const sel=$('model-picker');sel.replaceChildren();for(const item of data.models){const opt=node('option','',item.name+(item.configured?'':' · 未配置'));opt.value=item.id;sel.appendChild(opt);}state.model=data.default;sel.value=state.model;updateModelBadge();}
 function updateModelBadge(){const model=state.models.find(x=>x.id===state.model);$('model-badge').textContent=model?.configured?'已配置':'需 API Key';$('model-badge').style.background=model?.configured?'#e9f6ef':'#fff1e5';$('model-badge').style.color=model?.configured?'#23886b':'#a66a35';}
@@ -277,6 +277,48 @@ function mountTask(task){renderMessage('user',task.message);const row=renderMess
 function paintTask(task){if(state.conversationId!==task.id||!task.bubble?.isConnected)return;fillAssistant(task.bubble,task.answer);task.bubble.classList.toggle('is-streaming',!task.done);if(!task.done){task.status=node('div','thinking-status',task.statusText||'正在生成回答…');task.status.hidden=Boolean(task.answer);task.bubble.appendChild(task.status);}scrollBottom();}
 async function openConversation(id){try{const data=await api('/api/conversations/'+encodeURIComponent(id));state.conversationId=id;$('messages').replaceChildren();for(const m of data.messages)renderMessage(m.role,m.content,m.meta?.plan,m.meta?.tool_trace,m.meta?.context_note);state.model=state.models.some(x=>x.id===data.model)?data.model:state.model;$('model-picker').value=state.model;updateModelBadge();const task=state.tasks.get(id);if(task)mountTask(task);else $('send-button').disabled=false;selectTab('chat');loadHistory();scrollBottom();}catch(e){toast(e.message);}}
 async function sendChat(message){let conversationId=state.conversationId,task=null;if(conversationId&&state.tasks.has(conversationId))return;$('send-button').disabled=true;try{if(!conversationId){const created=await api('/api/conversations',{method:'POST',body:JSON.stringify({title:message.slice(0,36),model:state.model})});conversationId=created.id;state.conversationId=conversationId;loadHistory();}task={id:conversationId,message,answer:'',statusText:'正在分析…',done:false,bubble:null,status:null};state.tasks.set(conversationId,task);mountTask(task);const res=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json','Cache-Control':'no-cache'},body:JSON.stringify({message,model:state.model,conversation_id:conversationId}),cache:'no-store'});if(!res.ok){let detail=`HTTP ${res.status}`;try{const body=await res.json();detail=body.detail||detail;}catch(_){}throw Error(detail);}if(!res.body)throw Error('浏览器不支持流式响应');const reader=res.body.getReader(),decoder=new TextDecoder();let pending='',doneData=null;while(true){const part=await reader.read();if(part.done)break;pending+=decoder.decode(part.value,{stream:true});const lines=pending.split('\n');pending=lines.pop();for(const raw of lines){if(!raw.trim())continue;const event=JSON.parse(raw);if(event.event==='status'){task.statusText=event.text;if(task.status?.isConnected){task.status.textContent=event.text;task.status.hidden=false;}await new Promise(requestAnimationFrame);}else if(event.event==='delta'){task.answer+=event.text;paintTask(task);await new Promise(requestAnimationFrame);}else if(event.event==='done')doneData=event;else if(event.event==='error')throw Error(event.message);}}if(!doneData)throw Error('流式响应意外中断');task.done=true;if(state.conversationId===conversationId&&task.bubble?.isConnected){task.bubble.classList.remove('is-streaming');fillAssistant(task.bubble,task.answer,doneData.plan,doneData.tool_trace,doneData.context_note);$('send-button').disabled=false;}state.tasks.delete(conversationId);loadHistory();}catch(e){if(task){task.done=true;task.answer+=(task.answer?'\n\n':'')+'请求失败：'+e.message;paintTask(task);state.tasks.delete(conversationId);}if(state.conversationId===conversationId)$('send-button').disabled=false;toast(e.message);}finally{if(state.conversationId===conversationId&&!state.tasks.has(conversationId))$('send-button').disabled=false;scrollBottom();}}
+/* ---------------- 候选景点：点胶囊即选中 ---------------- */
+const poiState={city:'',spots:[],selected:new Set()};
+async function loadPoiCandidates(){
+  const city=$('city-picker').value.trim();
+  if(!city){toast('先填写目的地');return;}
+  const status=$('poi-status');
+  status.textContent='正在获取候选景点…';
+  try{
+    const data=await api('/api/pois?city='+encodeURIComponent(city));
+    poiState.city=city;
+    poiState.spots=data.spots||[];
+    poiState.selected=new Set();
+    renderPoiOptions();
+    updatePoiCount(data.source==='amap_cache'?'（缓存）':'');
+  }catch(err){
+    poiState.spots=[];poiState.selected=new Set();renderPoiOptions();
+    status.textContent=err.message;
+  }
+}
+function renderPoiOptions(){
+  const box=$('poi-options');
+  if(!box)return;
+  box.replaceChildren();
+  poiState.spots.forEach(function(s){
+    const btn=node('button','spot-pill'+(poiState.selected.has(s.id)?' selected':''),s.name);
+    btn.type='button';
+    btn.dataset.id=s.id;
+    btn.title=(s.tags&&s.tags[0]?s.tags[0]+' · ':'')+'建议 '+(s.duration_hours||1.5)+' 小时';
+    btn.addEventListener('click',function(){
+      if(poiState.selected.has(s.id))poiState.selected.delete(s.id);
+      else poiState.selected.add(s.id);
+      btn.classList.toggle('selected',poiState.selected.has(s.id));
+      updatePoiCount();
+    });
+    box.appendChild(btn);
+  });
+}
+function updatePoiCount(prefix){
+  const el=$('poi-status');
+  if(!el||!poiState.spots.length)return;
+  el.textContent=(prefix||'')+' '+(poiState.selected.size?('已选 '+poiState.selected.size+' / '):'')+poiState.spots.length+' 个候选';
+}
 const ROUTE_STYLES={balanced:['kmeans','dp'],compact:['dbscan','dp'],fast:['kmeans','greedy']};
 function resolveRouteStyle(){
   const style=$('style-picker')?$('style-picker').value:'balanced';
@@ -289,7 +331,7 @@ function syncStyleControls(){
   const custom=style==='custom';
   ['cluster-picker','route-picker'].forEach(function(id){const el=$(id);if(el)el.disabled=!custom;});
 }
-async function submitPlan(e){e.preventDefault();const target=$('plan-result');target.replaceChildren(node('div','empty-card','正在规划…'));const algo=resolveRouteStyle();try{const data=await api('/api/plan',{method:'POST',body:JSON.stringify({city:$('city-picker').value,origin:$('origin').value,days:Number($('days').value),clustering:algo.clustering,routing:algo.routing,pace:$('pace-picker')?$('pace-picker').value:'relaxed'})});target.replaceChildren();renderPlan(data,target);}catch(err){target.replaceChildren(node('div','empty-card','生成失败：'+err.message));}}
+async function submitPlan(e){e.preventDefault();const target=$('plan-result');target.replaceChildren(node('div','empty-card','正在规划…'));const algo=resolveRouteStyle();try{const data=await api('/api/plan',{method:'POST',body:JSON.stringify({city:$('city-picker').value,origin:$('origin').value,days:Number($('days').value),clustering:algo.clustering,routing:algo.routing,pace:$('pace-picker')?$('pace-picker').value:'relaxed',spot_ids:(poiState.city===$('city-picker').value.trim()?Array.from(poiState.selected):[])})});target.replaceChildren();renderPlan(data,target);}catch(err){target.replaceChildren(node('div','empty-card','生成失败：'+err.message));}}
 async function submitBench(e){e.preventDefault();const root=$('bench-result');root.replaceChildren(node('div','empty-card','正在计算…'));try{const endpoint=$('bench-source').value==='fixture'?'/api/benchmark-fixture':'/api/benchmark';const data=await api(endpoint+'?'+new URLSearchParams({city:$('bench-city').value,days:$('bench-days').value}));const table=node('table','comparison-table');const head=node('tr');for(const h of ['聚类','路径优化','直线距离合计','簇数','噪声点'])head.appendChild(node('th','',h));table.appendChild(head);data.rows.forEach(row=>{const tr=node('tr');for(const val of [row.clustering,row.routing,row.distance_km+' km',row.cluster_count,row.noise_count])tr.appendChild(node('td','',String(val)));table.appendChild(tr);});root.replaceChildren(node('p','note','数据来源：'+(data.source||'未知')),table,node('p','note',data.note));}catch(err){root.replaceChildren(node('div','empty-card',err.message));}}
 async function refreshDefects(){try{const [quality,result]=await Promise.all([api('/api/quality-summary'),api('/api/defects')]);const metrics=$('quality-metrics');metrics.replaceChildren();for(const [k,label] of [['total_defects','累计缺陷'],['open','待处理'],['fixed','已修复'],['verified','已复测']]){const box=node('div','metric');add(box,node('span','',label),node('strong','',String(k==='total_defects'?quality.total_defects:quality.by_status[k])));metrics.appendChild(box);}const list=$('defect-list');list.replaceChildren();if(!result.defects.length){list.appendChild(node('div','empty-card','暂无缺陷记录。请先执行真实测试，再如实登记。'));return;}
 for(const d of result.defects){const card=node('div','defect-entry');const title=node('h3','',`#${d.id} ${d.title}`);title.appendChild(node('span','pill-tag',SEVERITIES[d.severity]||d.severity));add(card,title,node('p','',`复现步骤：${d.steps}`),node('p','',`预期：${d.expected}`),node('p','',`实际：${d.actual}`));const sel=node('select');for(const [v,label] of Object.entries(STATUSES)){const opt=node('option','',label);opt.value=v;sel.appendChild(opt);}sel.value=d.status;sel.addEventListener('change',async()=>{try{await api('/api/defects/'+d.id,{method:'PATCH',body:JSON.stringify({status:sel.value})});toast('缺陷状态已更新');refreshDefects();}catch(err){toast(err.message);sel.value=d.status;}});card.appendChild(sel);list.appendChild(card);}
@@ -297,6 +339,8 @@ for(const d of result.defects){const card=node('div','defect-entry');const title
 async function submitDefect(e){e.preventDefault();const values={title:$('defect-title').value,steps:$('defect-steps').value,expected:$('defect-expected').value,actual:$('defect-actual').value,severity:$('defect-severity').value};try{await api('/api/defects',{method:'POST',body:JSON.stringify(values)});$('defect-form').reset();toast('缺陷已保存');refreshDefects();}catch(err){toast(err.message);}}
 async function init(){document.querySelectorAll('[data-tab]').forEach(n=>n.addEventListener('click',()=>selectTab(n.dataset.tab)));$('new-chat').addEventListener('click',resetChat);$('refresh-history').addEventListener('click',()=>loadHistory().catch(e=>toast(e.message)));$('model-picker').addEventListener('change',e=>{state.model=e.target.value;updateModelBadge();});$('chat-form').addEventListener('submit',e=>{e.preventDefault();const message=$('chat-input').value.trim();if(!message)return;$('chat-input').value='';sendChat(message);});$('chat-input').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();$('chat-form').requestSubmit();}});document.querySelectorAll('[data-prompt]').forEach(btn=>btn.addEventListener('click',()=>{$('chat-input').value=btn.dataset.prompt;$('chat-form').requestSubmit();}));$('plan-form').addEventListener('submit',submitPlan);$('bench-form').addEventListener('submit',submitBench);$('defect-form').addEventListener('submit',submitDefect);$('mobile-menu').addEventListener('click',()=>{$('sidebar').classList.add('mobile-open');$('overlay').hidden=false;});$('overlay').addEventListener('click',closeSidebar);
 if($('style-picker')){$('style-picker').addEventListener('change',syncStyleControls);syncStyleControls();}
+  if($('load-pois')){$('load-pois').addEventListener('click',loadPoiCandidates);}
+  if($('city-picker')){$('city-picker').addEventListener('input',function(){if(poiState.city&&poiState.city!==$('city-picker').value.trim()){poiState.spots=[];poiState.selected=new Set();poiState.city='';renderPoiOptions();const st=$('poi-status');if(st)st.textContent='目的地已修改，请重新获取候选';}});}
   try{await Promise.all([loadModels(),loadCities(),loadHistory(),loadMapConfig()]);await api('/api/health');$('server-dot').classList.add('ok');$('server-status').textContent='本地服务正常';}catch(err){$('server-status').textContent='连接失败';toast('初始化失败：'+err.message);}}
 function initQuestionOutlineToggle(){setQuestionOutlineCollapsed(localStorage.getItem('tripmind-question-outline-collapsed')==='1');$('question-outline-toggle').addEventListener('click',()=>setQuestionOutlineCollapsed(!$('question-outline').classList.contains('collapsed')));}
 window.addEventListener('DOMContentLoaded',initQuestionOutlineToggle);

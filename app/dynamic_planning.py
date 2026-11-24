@@ -42,7 +42,8 @@ def discover(db, settings, city, keyword='景点', limit=16, *, amap_client=None
 
 
 def build_live_plan(db, settings, city, origin, days, interests='', must_visit=None,
-                    clustering='kmeans', routing='greedy', *, pace=None, amap_client=None):
+                    clustering='kmeans', routing='greedy', *, pace=None, spot_ids=None,
+                    amap_client=None):
     if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= 7:
         raise ValueError('旅行天数必须是 1～7 天')
     if clustering not in ('kmeans', 'dbscan') or routing not in ('greedy', 'dp'):
@@ -55,6 +56,14 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
     keyword = '旅游景点'
     # 一次取满 16 个候选：多出来的由时间排程决定是否排入，而不是一开始就少取
     spots, provenance = discover(db, settings, city, keyword, 16, amap_client=amap_client)
+    missing_selection = []
+    if spot_ids:
+        wanted = [str(x) for x in spot_ids]
+        by_id = {p['id']: p for p in spots}
+        selected = [by_id[i] for i in wanted if i in by_id]
+        missing_selection = [i for i in wanted if i not in by_id]
+        if selected:
+            spots = selected
     must_visit = [str(p)[:50] for p in (must_visit or [])[:5] if str(p).strip()]
     # Respect explicitly requested landmarks using additional verified POI lookups.
     for name in must_visit:
@@ -73,6 +82,10 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
     result['data_source'] = '高德地图 POI 实时接口' if provenance == 'amap_live' else '高德地图 POI 缓存'
     result['amap_source'] = provenance
     result['preferences'] = (interests or '')[:200]
+    result['selected_count'] = len(spots)
+    if missing_selection:
+        result['selection_note'] = (f'有 {len(missing_selection)} 个所选景点未出现在本次候选里'
+                                    '（可能已下线或排序变化），已按其余景点排程。')
     result['map_note'] = '景点位置来自高德 GCJ-02 坐标，已在响应中附带 wgs_lat/wgs_lon 供开源底图使用；景点之间为直线距离算法估计，不代表道路导航或实时交通。'
     for d in result['daily']:
         for p in d['spots']:
@@ -86,7 +99,7 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
     if origin not in ('未指定', city):
         budget = max(1.0, settings.amap_intercity_budget_seconds)
         deadline = time.monotonic() + budget
-        per_call_timeout = max(1.0, min(settings.amap_timeout_seconds, budget))
+        per_call_timeout = max(1.2, min(2.5, settings.amap_timeout_seconds, budget))
 
         def route_timeout():
             return max(1.0, min(per_call_timeout, deadline - time.monotonic()))

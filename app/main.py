@@ -17,6 +17,7 @@ from sqlalchemy import case, func, select, text
 from .config import Settings
 from .agent import AgentError, run_agent
 from .amap import MapError, walking_route
+from .geo import add_wgs84_fields
 from .dynamic_planning import build_live_plan, benchmark_live
 from .planning import comparison_from_db
 from .models import Attraction, ChatMessage, Conversation, Defect, utcnow
@@ -44,6 +45,7 @@ class PlanInput(BaseModel):
     model_config = ConfigDict(extra='forbid')
     city: str = Field(min_length=1, max_length=50)
     pace: str = Field(default='relaxed', max_length=16)
+    spot_ids: list[str] = Field(default_factory=list, max_length=16)
     origin: str = Field(default='上海', max_length=50)
     days: int = Field(ge=1, le=7)
     clustering: str = 'kmeans'
@@ -115,7 +117,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.2.2', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.3.0', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -130,7 +132,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.2.2', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.3.0', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -159,6 +161,26 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             return {'cities': list_cities(db)}
 
+    @app.get('/api/pois')
+    def pois(city: str = Query(min_length=1, max_length=50),
+             keyword: str = Query(default='旅游景点', max_length=65),
+             limit: int = Query(default=16, ge=1, le=20)):
+        """返回某城市的候选景点，供用户勾选后再规划。"""
+        from .dynamic_planning import discover
+        with Session() as db:
+            try:
+                spots, source = discover(db, settings, city.strip(), keyword.strip() or '旅游景点', limit)
+            except (ValueError, MapError) as exc:
+                raise HTTPException(422, str(exc)) from exc
+        items = []
+        for spot in spots[:limit]:
+            item = {'id': spot['id'], 'name': spot['name'], 'lat': spot['lat'], 'lon': spot['lon'],
+                    'tags': spot.get('tags') or [], 'duration_hours': spot.get('duration_hours', 1.5)}
+            add_wgs84_fields(item)
+            items.append(item)
+        return {'city': city.strip(), 'keyword': keyword.strip() or '旅游景点',
+                'source': source, 'spots': items}
+
     @app.get('/api/attractions')
     def attractions(city: str = Query(min_length=1, max_length=50)):
         from .storage import get_spots
@@ -177,7 +199,8 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             try:
                 return build_live_plan(db, settings, payload.city.strip(), payload.origin.strip(), payload.days,
-                    clustering=payload.clustering, routing=payload.routing, pace=payload.pace)
+                    clustering=payload.clustering, routing=payload.routing, pace=payload.pace,
+                    spot_ids=payload.spot_ids)
             except (ValueError, MapError) as exc:
                 raise HTTPException(422, str(exc)) from exc
 
