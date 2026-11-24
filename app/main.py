@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import time
 from datetime import timedelta, timezone
@@ -15,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import case, func, select, text
 from .config import Settings
 from .agent import AgentError, run_agent
-from .amap import MapError
+from .amap import MapError, walking_route
 from .dynamic_planning import build_live_plan, benchmark_live
 from .planning import comparison_from_db
 from .models import Attraction, ChatMessage, Conversation, Defect, utcnow
@@ -62,6 +63,19 @@ class DefectUpdate(BaseModel):
     status: str
 
 
+class RouteSegment(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    start: tuple[float, float]
+    end: tuple[float, float]
+
+
+class RouteGeometryInput(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    segments: list[RouteSegment] = Field(default_factory=list, max_length=16)
+
+leg_geometry_cache: dict[tuple, tuple] = {}
+
+
 def iso(dt):
     """统一输出带 UTC 时区的 ISO 8601 时间。
 
@@ -100,7 +114,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.1.0', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.1.1', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -115,7 +129,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.1.0', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.1.1', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -346,6 +360,88 @@ def create_app(settings: Settings | None = None, engine=None):
 
         return StreamingResponse(generate(), media_type='application/x-ndjson', headers={
             'Cache-Control':'no-cache, no-transform', 'X-Accel-Buffering':'no'})
+
+    @app.post('/api/route-geometry')
+    def route_geometry(payload: RouteGeometryInput):
+        """并发获取相邻景点之间的步行道路折线。
+
+        地图先按直线渲染，本接口返回后再把线替换成真实道路轨迹；
+        单段失败或超时就保持直线，不影响行程本身。高德该接口会间歇性卡顿，
+        因此每条请求单独限时，并对成功结果做进程内缓存。
+        """
+        if not settings.amap_api_key:
+            raise HTTPException(status_code=422, detail='缺少 AMAP_WEB_KEY，无法获取道路轨迹。')
+        segments = payload.segments
+        if not segments:
+            return {'legs': [], 'note': '没有需要取轨迹的相邻景点。'}
+
+        budget = max(2.0, settings.amap_legs_budget_seconds)
+        per_call = max(2.0, min(6.0, settings.amap_timeout_seconds))
+        results = [None] * len(segments)
+
+        def cache_key(seg):
+            return (round(seg.start[0], 4), round(seg.start[1], 4),
+                    round(seg.end[0], 4), round(seg.end[1], 4))
+
+        def fetch(index):
+            seg = segments[index]
+            key = cache_key(seg)
+            cached = leg_geometry_cache.get(key)
+            if cached and time.time() - cached[0] < 6 * 3600:
+                return cached[1]
+            try:
+                route = walking_route({'lon': seg.start[0], 'lat': seg.start[1]},
+                                      {'lon': seg.end[0], 'lat': seg.end[1]},
+                                      key=settings.amap_api_key, timeout=per_call)
+            except MapError:
+                return None
+            if route and route.get('path'):
+                leg_geometry_cache[key] = (time.time(), route)
+                return route
+            return None
+
+        cached_count = sum(1 for seg in segments
+                           if leg_geometry_cache.get(cache_key(seg))
+                           and time.time() - leg_geometry_cache[cache_key(seg)][0] < 6 * 3600)
+        pending = [i for i in range(len(segments))
+                   if not (leg_geometry_cache.get(cache_key(segments[i]))
+                           and time.time() - leg_geometry_cache[cache_key(segments[i])][0] < 6 * 3600)]
+        for i in range(len(segments)):
+            if i not in pending:
+                results[i] = leg_geometry_cache[cache_key(segments[i])][1]
+
+        if pending:
+            pool = ThreadPoolExecutor(max_workers=min(4, len(pending)))
+            futures = {pool.submit(fetch, i): i for i in pending}
+            try:
+                for future in as_completed(futures, timeout=budget):
+                    index = futures[future]
+                    try:
+                        results[index] = future.result()
+                    except Exception:
+                        results[index] = None
+            except TimeoutError:
+                pass
+            finally:
+                # 不等卡住的请求：超时的那几段直接按直线处理
+                pool.shutdown(wait=False, cancel_futures=True)
+
+        legs = []
+        for index, route in enumerate(results):
+            if route and route.get('path'):
+                legs.append({'index': index, 'path': route['path'],
+                             'distance_m': route.get('distance_m', 0),
+                             'duration_s': route.get('duration_s', 0), 'source': 'walking'})
+            else:
+                legs.append({'index': index, 'path': None, 'source': 'straight'})
+        routed = sum(1 for leg in legs if leg['source'] == 'walking')
+        if routed == len(legs):
+            note = f'共 {len(legs)} 段景点间路线均取得高德步行道路轨迹。'
+        else:
+            note = f'共 {len(legs)} 段景点间路线，{routed} 段取得高德步行道路轨迹；其余为直线估计。'
+        if cached_count:
+            note += f'（其中 {cached_count} 段来自缓存）'
+        return {'legs': legs, 'note': note}
 
     @app.get('/api/defects')
     def defects():

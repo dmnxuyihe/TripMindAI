@@ -74,19 +74,41 @@ async function loadMapConfig(){
 // 高德 JS API：坐标为 GCJ-02，与后端 lat/lon 完全一致，无需纠偏
 const DAY_COLORS=['#168569','#2f6fd0','#c27b1e','#8a4fd0','#b03a48','#1f8a9c','#6b7a1f'];
 
+// 兼容两种入参：[[spot,...],...] 或 [{spots,legs},...]
+function normalizeDays(input){
+  const arr=Array.isArray(input)?input:(input?[input]:[]);
+  return arr.map(function(item){
+    if(Array.isArray(item))return {spots:item,legs:null};
+    if(item&&Array.isArray(item.spots))return {spots:item.spots,legs:item.legs||null};
+    return null;
+  }).filter(function(d){return d&&d.spots&&d.spots.length;});
+}
+
+// 某一天的绘制段：优先用后端给的沿道路折线，缺失再退回直线
+function dayPaths(day){
+  const legs=(day.legs||[]).filter(function(l){return l&&Array.isArray(l.path)&&l.path.length>1;});
+  if(legs.length)return legs.map(function(l){return {path:l.path,road:true};});
+  if(day.spots.length>1)return [{path:day.spots.map(function(s){return [s.lon,s.lat];}),road:false}];
+  return [];
+}
+
 function drawAmap(host,days,intercity,onAuthFail){
-  const spots=[].concat.apply([],days);
+  const spots=[].concat.apply([],days.map(function(d){return d.spots;}));
   const map=new AMap.Map(host,{zoom:12,viewMode:'2D',resizeEnable:true});
   const overlays=[];
-  // 每天的线路单独成线，颜色区分，避免跨天连成一条“幽灵路线”
   days.forEach(function(day,di){
-    if(day.length>1)overlays.push(new AMap.Polyline({
-      path:day.map(function(s){return [s.lon,s.lat];}),
-      strokeColor:DAY_COLORS[di%DAY_COLORS.length],strokeWeight:4,strokeOpacity:0.85,lineJoin:'round'}));
+    const color=DAY_COLORS[di%DAY_COLORS.length];
+    dayPaths(day).forEach(function(seg){
+      overlays.push(new AMap.Polyline({path:seg.path,strokeColor:color,
+        strokeWeight:seg.road?5:4,strokeOpacity:seg.road?0.9:0.6,lineJoin:'round'}));
+    });
   });
-  if(intercity&&intercity.start&&intercity.end)overlays.push(new AMap.Polyline({
-    path:[[intercity.start.lon,intercity.start.lat],[intercity.end.lon,intercity.end.lat]],
-    strokeColor:'#9aa8a2',strokeWeight:2,strokeStyle:'dashed'}));
+  if(intercity&&intercity.start&&intercity.end){
+    const ipath=(Array.isArray(intercity.polyline)&&intercity.polyline.length>1)
+      ?intercity.polyline:[[intercity.start.lon,intercity.start.lat],[intercity.end.lon,intercity.end.lat]];
+    overlays.push(new AMap.Polyline({path:ipath,strokeColor:'#9aa8a2',strokeWeight:3,
+      strokeOpacity:0.85,strokeStyle:'dashed'}));
+  }
   spots.forEach(function(s,i){
     overlays.push(new AMap.Marker({
       position:[s.lon,s.lat],offset:new AMap.Pixel(-13,-13),zIndex:120+i,title:s.name,
@@ -95,7 +117,6 @@ function drawAmap(host,days,intercity,onAuthFail){
   map.add(overlays);
   const focus=overlays.filter(function(o){return o instanceof AMap.Marker;});
   setTimeout(function(){map.setFitView(focus.length?focus:overlays,false,[40,40,40,40],16);},150);
-  // 高德在 canvas 里画底图；若鉴权被拒，canvas 仍是空白，只能靠控制台错误识别。
   setTimeout(function(){
     if(window.__amapAuthError&&typeof onAuthFail==='function'){
       try{map.destroy();}catch(err){}
@@ -107,25 +128,40 @@ function drawAmap(host,days,intercity,onAuthFail){
 
 // 开源底图回退：OSM 用纠偏后的 WGS-84，高德栅格用原始 GCJ-02
 function drawLeaflet(host,days,intercity){
-  const spots=[].concat.apply([],days);
+  const spots=[].concat.apply([],days.map(function(d){return d.spots;}));
   const map=L.map(host,{scrollWheelZoom:false});
   const amap=L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{subdomains:'1234',maxZoom:18,attribution:'&copy; 高德地图'});
   const osm=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'});
   amap.addTo(map);
   let useWgs=false;
   const group=L.layerGroup().addTo(map);
+  // 折线是 [lon,lat]，Leaflet 需要 [lat,lon]
+  function toLatLng(lonLat,spot){
+    if(Array.isArray(lonLat))return [lonLat[1],lonLat[0]];
+    return coordOf(spot,useWgs);
+  }
   function draw(){
     group.clearLayers();
-    const allPts=spots.map(function(s){return coordOf(s,useWgs);});
     days.forEach(function(day,di){
-      if(day.length<2)return;
-      L.polyline(day.map(function(s){return coordOf(s,useWgs);}),
-        {color:DAY_COLORS[di%DAY_COLORS.length],weight:4,opacity:0.85,lineJoin:'round'}).addTo(group);
+      const color=DAY_COLORS[di%DAY_COLORS.length];
+      if(day.legs&&day.legs.some(function(l){return l&&Array.isArray(l.path)&&l.path.length>1;})){
+        day.legs.forEach(function(l){
+          if(!l||!Array.isArray(l.path)||l.path.length<2)return;
+          L.polyline(l.path.map(function(p){return toLatLng(p);}),
+            {color:color,weight:5,opacity:0.9,lineJoin:'round'}).addTo(group);
+        });
+      }else if(day.spots.length>1){
+        L.polyline(day.spots.map(function(s){return coordOf(s,useWgs);}),
+          {color:color,weight:4,opacity:0.6,lineJoin:'round'}).addTo(group);
+      }
     });
     if(intercity&&intercity.start&&intercity.end){
-      L.polyline([coordOf(intercity.start,useWgs),coordOf(intercity.end,useWgs)],
-        {color:'#9aa8a2',weight:2,dashArray:'6 8'}).addTo(group);
+      const ipath=(Array.isArray(intercity.polyline)&&intercity.polyline.length>1)
+        ?intercity.polyline.map(function(p){return toLatLng(p);})
+        :[coordOf(intercity.start,useWgs),coordOf(intercity.end,useWgs)];
+      L.polyline(ipath,{color:'#9aa8a2',weight:3,dashArray:'6 8'}).addTo(group);
     }
+    const allPts=spots.map(function(s){return coordOf(s,useWgs);});
     spots.forEach(function(s,i){
       L.marker(allPts[i],{icon:L.divIcon({className:'route-pin',html:'<span>'+(i+1)+'</span>',iconSize:[26,26],iconAnchor:[13,13]})})
         .bindTooltip((i+1)+'. '+s.name,{direction:'top'}).addTo(group);
@@ -138,11 +174,9 @@ function drawLeaflet(host,days,intercity){
   setTimeout(function(){map.invalidateSize();},150);
 }
 
-function buildRouteMap(daysOrSpots,intercity){
-  const days=(Array.isArray(daysOrSpots)&&daysOrSpots.length&&Array.isArray(daysOrSpots[0]))
-    ? daysOrSpots.filter(function(d){return d&&d.length;})
-    : (daysOrSpots&&daysOrSpots.length?[daysOrSpots]:[]);
-  const spots=[].concat.apply([],days);
+function buildRouteMap(input,intercity){
+  const days=normalizeDays(input);
+  const spots=[].concat.apply([],days.map(function(d){return d.spots;}));
   const valid=spots.length>0&&spots.every(function(s){return s&&s.lat!=null&&s.lon!=null;});
   if(!valid)return routeSvg(spots);
   const host=node('div','route-map');
@@ -166,6 +200,42 @@ function buildRouteMap(daysOrSpots,intercity){
   return host;
 }
 
+/* 先用直线把图渲染出来，再异步取高德步行轨迹替换；拿不到就保持直线 */
+function routeSegments(days){
+  const segs=[];
+  days.forEach(function(day,di){
+    const spots=day.spots||[];
+    for(let i=1;i<spots.length;i++){
+      segs.push({day:di,from:[spots[i-1].lon,spots[i-1].lat],to:[spots[i].lon,spots[i].lat]});
+    }
+  });
+  return segs;
+}
+
+let routeGeometrySeq=0;
+async function enhanceRouteGeometry(days,panel){
+  const segs=routeSegments(days);
+  if(!segs.length)return;
+  const token=++routeGeometrySeq;
+  try{
+    const data=await api('/api/route-geometry',{method:'POST',body:JSON.stringify({
+      segments:segs.map(function(s){return {start:s.from,end:s.to};})})});
+    if(token!==routeGeometrySeq||!data||!data.legs)return;
+    const byDay={};
+    data.legs.forEach(function(leg){
+      const seg=segs[leg.index];
+      if(!seg||!leg.path)return;
+      (byDay[seg.day]=byDay[seg.day]||[]).push(leg.path);
+    });
+    Object.keys(byDay).forEach(function(key){
+      days[key].legs=byDay[key].map(function(path){return {path:path,source:'walking'};});
+    });
+    if(!panel.isConnected)return;
+    panel.replaceChildren(buildRouteMap(days,null));
+    if(data.note)panel.appendChild(node('div','note',data.note));
+  }catch(err){/* 保持直线 */ }
+}
+
 function routeSvg(spots){const W=860,H=260,pad=45;const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('role','img');svg.setAttribute('aria-label','景点经纬度位置和连线示意图');if(!spots.length)return svg;
 const minLat=Math.min(...spots.map(x=>x.lat)),maxLat=Math.max(...spots.map(x=>x.lat));const minLon=Math.min(...spots.map(x=>x.lon)),maxLon=Math.max(...spots.map(x=>x.lon));const dx=Math.max(.02,maxLon-minLon),dy=Math.max(.02,maxLat-minLat);
 const px=s=>pad+((s.lon-minLon)/dx)*(W-2*pad),py=s=>H-pad-((s.lat-minLat)/dy)*(H-2*pad);
@@ -177,8 +247,8 @@ function renderPlan(plan,target,compact=false){const wrap=node('section','result
 const all=[];
 for(const day of plan.daily){const card=node('section','day-card');add(card,node('h3','',`第 ${day.day} 天 · ${day.theme}`),node('div','day-meta',`${day.spots.length} 个景点 · 预计游览 ${day.duration_hours} 小时 · 直线连线约 ${day.distance_km} km`));const chips=node('div','spot-list');for(const spot of day.spots){all.push(spot);const b=node('button','spot-pill',spot.name+' ↗');b.type='button';b.addEventListener('click',()=>{const old=card.querySelector('.spot-detail');if(old)old.remove();const detail=node('div','spot-detail');detail.style.cssText='margin-top:13px;padding:13px;background:#f8faf8;border-radius:10px;line-height:1.8';add(detail,node('strong','',spot.name),node('p','',spot.description||'暂无描述'),node('div','note',`建议游览 ${spot.duration_hours} 小时 · ${spot.tags.join(' / ')}`));if(spot.map_url){const a=node('a','meta-link','在高德地图查看 ↗');a.href=spot.map_url;a.target='_blank';a.rel='noopener noreferrer';detail.appendChild(a);}if(spot.photo_url){const img=node('img');img.src=spot.photo_url;img.alt=spot.name;img.loading='lazy';img.style.cssText='max-width:100%;max-height:240px;object-fit:cover;border-radius:10px';img.onerror=()=>img.remove();detail.appendChild(img);if(spot.photo_credit){const source=node('a','meta-link',spot.photo_credit);source.href=spot.photo_source||spot.photo_url;source.target='_blank';source.rel='noopener noreferrer';detail.appendChild(source);}}else detail.appendChild(node('p','note','暂未收录该景点的授权实景照片，可在数据库 photo_url 字段补充。'));card.appendChild(detail);});chips.appendChild(b);}card.appendChild(chips);wrap.appendChild(card);}
 if(plan.intercity_route){const r=plan.intercity_route;const card=node('section','day-card');add(card,node('h3','',`跨城市路线示意 · ${r.origin} → ${r.destination}`),node('div','day-meta',r.driving_distance_km!==undefined?`高德驾车 ${r.driving_distance_km} km · 估计 ${r.driving_duration_min} 分钟（不含实时路况）`:`两地直线距离约 ${r.straight_km} km，非高铁/驾车里程`));const panel=node('div','route-graphic');panel.appendChild(buildRouteMap([r.start,r.end],r));card.appendChild(panel);wrap.appendChild(card);}
-const allDays=(plan.daily||[]).map(function(d){return d.spots||[];});if(all.length){const panel=node('div','route-graphic');panel.appendChild(buildRouteMap(allDays,null));wrap.appendChild(panel);}
-if(!plan.intercity_route&&plan.intercity_note){wrap.appendChild(node('div','note',plan.intercity_note));}wrap.appendChild(node('div','note',plan.map_note||plan.distance_note));if(compact)wrap.style.marginTop='20px';target.appendChild(wrap);
+if(all.length){const panel=node('div','route-graphic');panel.appendChild(buildRouteMap(plan.daily,null));wrap.appendChild(panel);enhanceRouteGeometry(plan.daily,panel);}
+if(!plan.intercity_route&&plan.intercity_note){wrap.appendChild(node('div','note',plan.intercity_note));}if(plan.route_note)wrap.appendChild(node('div','note',plan.route_note));wrap.appendChild(node('div','note',plan.map_note||plan.distance_note));if(compact)wrap.style.marginTop='20px';target.appendChild(wrap);
 }
 async function loadModels(){const data=await api('/api/models');state.models=data.models;const sel=$('model-picker');sel.replaceChildren();for(const item of data.models){const opt=node('option','',item.name+(item.configured?'':' · 未配置'));opt.value=item.id;sel.appendChild(opt);}state.model=data.default;sel.value=state.model;updateModelBadge();}
 function updateModelBadge(){const model=state.models.find(x=>x.id===state.model);$('model-badge').textContent=model?.configured?'已配置':'需 API Key';$('model-badge').style.background=model?.configured?'#e9f6ef':'#fff1e5';$('model-badge').style.color=model?.configured?'#23886b':'#a66a35';}

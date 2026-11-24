@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 from hashlib import sha256
 from sqlalchemy import delete, select
-from .amap import MapError, amap_place_url, search_pois, geocode, driving_route
+from .amap import MapError, amap_place_url, search_pois, geocode, driving_route, walking_route
 from .geo import add_wgs84_fields
 from .models import PoiCache
 from .travel_core import make_plan, benchmark, centroid, haversine

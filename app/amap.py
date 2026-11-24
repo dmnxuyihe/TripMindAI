@@ -87,6 +87,49 @@ def search_pois(city: str, *, keyword: str = '景点', limit: int = 16, key: str
     return result
 
 
+def _parse_polyline(text):
+    """把高德返回的 "lon,lat;lon,lat;..." 折线串解析成坐标数组。"""
+    points = []
+    for chunk in str(text or '').split(';'):
+        if ',' not in chunk:
+            continue
+        lon, lat = chunk.split(',', 1)
+        try:
+            points.append([round(float(lon), 6), round(float(lat), 6)])
+        except (TypeError, ValueError):
+            continue
+    return points
+
+
+def _simplify(points, max_points=200):
+    """抽稀折线，避免一次规划把上百 KB 的坐标塞进响应。"""
+    if len(points) <= max_points:
+        return points
+    step = max(1, len(points) // max_points)
+    picked = points[::step]
+    if picked[-1] != points[-1]:
+        picked.append(points[-1])
+    return picked
+
+
+def _route_with_geometry(path, data):
+    routes = (data.get('route') or {}).get('paths') or []
+    if not routes:
+        return None
+    first = routes[0]
+    points = []
+    for step in first.get('steps') or []:
+        points.extend(_parse_polyline(step.get('polyline')))
+    if not points:
+        return None
+    try:
+        distance_m = int(float(first.get('distance') or 0))
+        duration_s = int(float(first.get('duration') or 0))
+    except (TypeError, ValueError):
+        distance_m = duration_s = 0
+    return {'path': _simplify(points), 'distance_m': distance_m, 'duration_s': duration_s}
+
+
 def geocode(address: str, *, key: str, timeout=12, client=None, use_cache=True):
     address = address.strip()[:120]
     now = time.monotonic()
@@ -112,11 +155,21 @@ def driving_route(start: dict, end: dict, *, key: str, timeout=12, client=None):
     if not paths:
         return None
     candidate = paths[0]
+    geometry = _route_with_geometry('/v3/direction/driving', data)
     try:
         return {'driving_distance_km': round(float(candidate['distance']) / 1000, 1),
-                'driving_duration_min': round(float(candidate['duration']) / 60)}
+                'driving_duration_min': round(float(candidate['duration']) / 60),
+                'polyline': (geometry or {}).get('path')}
     except (KeyError, ValueError, TypeError):
         return None
+
+
+def walking_route(start: dict, end: dict, *, key: str, timeout=12, client=None):
+    """步行路径规划；返回沿道路的折线，用于市内景点之间的真实连线。"""
+    data = _get('/v3/direction/walking', {
+        'origin': f'{start["lon"]},{start["lat"]}', 'destination': f'{end["lon"]},{end["lat"]}', 'output': 'json'
+    }, key=key, timeout=timeout, client=client)
+    return _route_with_geometry('/v3/direction/walking', data)
 
 
 def amap_place_url(spot: dict):
