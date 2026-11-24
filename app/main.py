@@ -114,7 +114,7 @@ def create_app(settings: Settings | None = None, engine=None):
     settings = settings or Settings()
     engine = engine or make_engine(settings.database_url)
     Session = setup_database(engine, initialize=settings.initialize_database)
-    app = FastAPI(title='智行旅途 Agent', version='3.1.1', docs_url='/api/docs', redoc_url=None)
+    app = FastAPI(title='智行旅途 Agent', version='3.1.2', docs_url='/api/docs', redoc_url=None)
     app.state.settings = settings
     app.state.session_factory = Session
     app.state.engine = engine
@@ -129,7 +129,7 @@ def create_app(settings: Settings | None = None, engine=None):
         with Session() as db:
             db.execute(text('SELECT 1'))
             count = db.scalar(select(func.count(Attraction.id)))
-        return {'status': 'ok', 'version': '3.1.1', 'database': 'ok', 'attractions': count,
+        return {'status': 'ok', 'version': '3.1.2', 'database': 'ok', 'attractions': count,
                 'qwen_configured': bool(settings.dashscope_api_key), 'amap_configured': bool(settings.amap_api_key),
                 'amap_js_configured': bool(settings.amap_js_key), 'route_mode': 'amap_poi_with_straight_line_algorithm'}
 
@@ -376,7 +376,8 @@ def create_app(settings: Settings | None = None, engine=None):
             return {'legs': [], 'note': '没有需要取轨迹的相邻景点。'}
 
         budget = max(2.0, settings.amap_legs_budget_seconds)
-        per_call = max(2.0, min(6.0, settings.amap_timeout_seconds))
+        # 单段限时压到 4 秒：高德偶发 10~20 秒的卡顿直接放弃，用直线兜底
+        per_call = max(1.2, min(2.5, settings.amap_timeout_seconds))
         results = [None] * len(segments)
 
         def cache_key(seg):
@@ -411,7 +412,7 @@ def create_app(settings: Settings | None = None, engine=None):
                 results[i] = leg_geometry_cache[cache_key(segments[i])][1]
 
         if pending:
-            pool = ThreadPoolExecutor(max_workers=min(4, len(pending)))
+            pool = ThreadPoolExecutor(max_workers=min(6, len(pending)))
             futures = {pool.submit(fetch, i): i for i in pending}
             try:
                 for future in as_completed(futures, timeout=budget):

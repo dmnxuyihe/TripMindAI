@@ -29,7 +29,7 @@ class Settings:
     amap_timeout_seconds: float = field(default_factory=lambda: float(os.getenv('AMAP_TIMEOUT_SECONDS', '12')))
     # 跨城距离只是展示性信息，给它单独的时间预算：超时就降级，不拖慢主流程。
     # 市内相邻景点步行路径的总预算；超时降级为直线，不拖慢规划
-    amap_legs_budget_seconds: float = field(default_factory=lambda: float(os.getenv('AMAP_LEGS_BUDGET_SECONDS', '8')))
+    amap_legs_budget_seconds: float = field(default_factory=lambda: float(os.getenv('AMAP_LEGS_BUDGET_SECONDS', '3.5')))
     amap_intercity_budget_seconds: float = field(default_factory=lambda: float(os.getenv('AMAP_INTERCITY_BUDGET_SECONDS', '8')))
     poi_cache_hours: int = field(default_factory=lambda: int(os.getenv('POI_CACHE_HOURS', '72')))
 

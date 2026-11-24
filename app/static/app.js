@@ -200,7 +200,14 @@ function buildRouteMap(input,intercity){
   return host;
 }
 
-/* 先用直线把图渲染出来，再异步取高德步行轨迹替换；拿不到就保持直线 */
+/* 地图占位与「先算后画」：轨迹取完（或预算耗尽）才出图，避免直线→沿路闪一次 */
+function mapPlaceholder(text){
+  const el=node('div','route-map-skeleton',text||'正在计算路线…');
+  el.style.cssText='height:380px;display:flex;align-items:center;justify-content:center;'
+    +'color:#8b96a0;font-size:13px;background:#f8faf8;border:1px dashed #dfeae6;border-radius:12px';
+  return el;
+}
+
 function routeSegments(days){
   const segs=[];
   days.forEach(function(day,di){
@@ -212,28 +219,38 @@ function routeSegments(days){
   return segs;
 }
 
-let routeGeometrySeq=0;
-async function enhanceRouteGeometry(days,panel){
-  const segs=routeSegments(days);
-  if(!segs.length)return;
-  const token=++routeGeometrySeq;
-  try{
-    const data=await api('/api/route-geometry',{method:'POST',body:JSON.stringify({
-      segments:segs.map(function(s){return {start:s.from,end:s.to};})})});
-    if(token!==routeGeometrySeq||!data||!data.legs)return;
-    const byDay={};
-    data.legs.forEach(function(leg){
-      const seg=segs[leg.index];
-      if(!seg||!leg.path)return;
-      (byDay[seg.day]=byDay[seg.day]||[]).push(leg.path);
-    });
-    Object.keys(byDay).forEach(function(key){
-      days[key].legs=byDay[key].map(function(path){return {path:path,source:'walking'};});
-    });
-    if(!panel.isConnected)return;
-    panel.replaceChildren(buildRouteMap(days,null));
-    if(data.note)panel.appendChild(node('div','note',data.note));
-  }catch(err){/* 保持直线 */ }
+async function fillMaps(items){
+  let note=null;
+  const dailyItem=items.filter(function(i){return i.kind==='daily';})[0];
+  if(dailyItem){
+    const segs=routeSegments(dailyItem.days);
+    if(segs.length){
+      try{
+        const data=await api('/api/route-geometry',{method:'POST',body:JSON.stringify({
+          segments:segs.map(function(s){return {start:s.from,end:s.to};})})});
+        if(data&&data.legs){
+          const byDay={};
+          data.legs.forEach(function(leg){
+            const seg=segs[leg.index];
+            if(!seg||!leg.path)return;
+            (byDay[seg.day]=byDay[seg.day]||[]).push(leg.path);
+          });
+          Object.keys(byDay).forEach(function(key){
+            dailyItem.days[key].legs=byDay[key].map(function(path){return {path:path,source:'walking'};});
+          });
+          note=data.note;
+        }
+      }catch(err){/* 拿不到就按直线出图，但只出一次 */}
+    }
+  }
+  items.forEach(function(item){
+    if(!item.panel.isConnected)return;
+    const map=(item.kind==='daily')
+      ? buildRouteMap(item.days,null)
+      : buildRouteMap([item.r.start,item.r.end],item.r);
+    item.panel.replaceChildren(map);
+    if(item.kind==='daily'&&note)item.panel.appendChild(node('div','note',note));
+  });
 }
 
 function routeSvg(spots){const W=860,H=260,pad=45;const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('role','img');svg.setAttribute('aria-label','景点经纬度位置和连线示意图');if(!spots.length)return svg;
@@ -243,12 +260,12 @@ function shape(tag,attrs){const el=document.createElementNS('http://www.w3.org/2
 for(let i=0;i<5;i++)shape('line',{x1:25,x2:W-25,y1:20+i*54,y2:20+i*54,stroke:'#e0eae5','stroke-width':1,'stroke-dasharray':'4 6'});
 if(spots.length>1)shape('polyline',{points:spots.map(s=>`${px(s)},${py(s)}`).join(' '),fill:'none',stroke:'#2a9c80','stroke-width':3.5,'stroke-linecap':'round','stroke-linejoin':'round'});
 spots.forEach((s,i)=>{shape('circle',{cx:px(s),cy:py(s),r:11,fill:'#fff',stroke:'#168569','stroke-width':3});const t=shape('text',{x:px(s),y:py(s)-20,'text-anchor':'middle',fill:'#3d6660','font-size':11,'font-weight':600});t.textContent=`${i+1} ${s.name}`;const n=shape('text',{x:px(s),y:py(s)+4,'text-anchor':'middle',fill:'#16785e','font-size':10,'font-weight':700});n.textContent=String(i+1);});return svg;}
-function renderPlan(plan,target,compact=false){const wrap=node('section','result-wrap');const summary=node('div','plan-summary');add(summary,node('h2','',`${plan.origin} → ${plan.city} · ${plan.days} 天`),node('p','',`算法：${plan.clustering.toUpperCase()} + ${plan.routing.toUpperCase()} · ${plan.data_source}`));for(const [val,label] of [[plan.spot_count,'景点数'],[plan.total_distance_km+' km','直线距离合计'],[plan.cluster_count,'聚类簇数']]){const s=node('div','stat');add(s,node('strong','',String(val)),node('span','',label));summary.appendChild(s);}wrap.appendChild(summary);
+function renderPlan(plan,target,compact=false){const wrap=node('section','result-wrap');const pendingMaps=[];const summary=node('div','plan-summary');add(summary,node('h2','',`${plan.origin} → ${plan.city} · ${plan.days} 天`),node('p','',`算法：${plan.clustering.toUpperCase()} + ${plan.routing.toUpperCase()} · ${plan.data_source}`));for(const [val,label] of [[plan.spot_count,'景点数'],[plan.total_distance_km+' km','直线距离合计'],[plan.cluster_count,'聚类簇数']]){const s=node('div','stat');add(s,node('strong','',String(val)),node('span','',label));summary.appendChild(s);}wrap.appendChild(summary);
 const all=[];
 for(const day of plan.daily){const card=node('section','day-card');add(card,node('h3','',`第 ${day.day} 天 · ${day.theme}`),node('div','day-meta',`${day.spots.length} 个景点 · 预计游览 ${day.duration_hours} 小时 · 直线连线约 ${day.distance_km} km`));const chips=node('div','spot-list');for(const spot of day.spots){all.push(spot);const b=node('button','spot-pill',spot.name+' ↗');b.type='button';b.addEventListener('click',()=>{const old=card.querySelector('.spot-detail');if(old)old.remove();const detail=node('div','spot-detail');detail.style.cssText='margin-top:13px;padding:13px;background:#f8faf8;border-radius:10px;line-height:1.8';add(detail,node('strong','',spot.name),node('p','',spot.description||'暂无描述'),node('div','note',`建议游览 ${spot.duration_hours} 小时 · ${spot.tags.join(' / ')}`));if(spot.map_url){const a=node('a','meta-link','在高德地图查看 ↗');a.href=spot.map_url;a.target='_blank';a.rel='noopener noreferrer';detail.appendChild(a);}if(spot.photo_url){const img=node('img');img.src=spot.photo_url;img.alt=spot.name;img.loading='lazy';img.style.cssText='max-width:100%;max-height:240px;object-fit:cover;border-radius:10px';img.onerror=()=>img.remove();detail.appendChild(img);if(spot.photo_credit){const source=node('a','meta-link',spot.photo_credit);source.href=spot.photo_source||spot.photo_url;source.target='_blank';source.rel='noopener noreferrer';detail.appendChild(source);}}else detail.appendChild(node('p','note','暂未收录该景点的授权实景照片，可在数据库 photo_url 字段补充。'));card.appendChild(detail);});chips.appendChild(b);}card.appendChild(chips);wrap.appendChild(card);}
-if(plan.intercity_route){const r=plan.intercity_route;const card=node('section','day-card');add(card,node('h3','',`跨城市路线示意 · ${r.origin} → ${r.destination}`),node('div','day-meta',r.driving_distance_km!==undefined?`高德驾车 ${r.driving_distance_km} km · 估计 ${r.driving_duration_min} 分钟（不含实时路况）`:`两地直线距离约 ${r.straight_km} km，非高铁/驾车里程`));const panel=node('div','route-graphic');panel.appendChild(buildRouteMap([r.start,r.end],r));card.appendChild(panel);wrap.appendChild(card);}
-if(all.length){const panel=node('div','route-graphic');panel.appendChild(buildRouteMap(plan.daily,null));wrap.appendChild(panel);enhanceRouteGeometry(plan.daily,panel);}
-if(!plan.intercity_route&&plan.intercity_note){wrap.appendChild(node('div','note',plan.intercity_note));}if(plan.route_note)wrap.appendChild(node('div','note',plan.route_note));wrap.appendChild(node('div','note',plan.map_note||plan.distance_note));if(compact)wrap.style.marginTop='20px';target.appendChild(wrap);
+if(plan.intercity_route){const r=plan.intercity_route;const card=node('section','day-card');add(card,node('h3','',`跨城市路线示意 · ${r.origin} → ${r.destination}`),node('div','day-meta',r.driving_distance_km!==undefined?`高德驾车 ${r.driving_distance_km} km · 估计 ${r.driving_duration_min} 分钟（不含实时路况）`:`两地直线距离约 ${r.straight_km} km，非高铁/驾车里程`));const panel=node('div','route-graphic');panel.appendChild(mapPlaceholder('正在计算跨城路线…'));card.appendChild(panel);wrap.appendChild(card);pendingMaps.push({panel:panel,kind:'intercity',r:r});}
+if(all.length){const panel=node('div','route-graphic');panel.appendChild(mapPlaceholder('正在计算沿道路路线…'));wrap.appendChild(panel);pendingMaps.push({panel:panel,kind:'daily',days:plan.daily});}
+if(!plan.intercity_route&&plan.intercity_note){wrap.appendChild(node('div','note',plan.intercity_note));}if(plan.route_note)wrap.appendChild(node('div','note',plan.route_note));wrap.appendChild(node('div','note',plan.map_note||plan.distance_note));if(compact)wrap.style.marginTop='20px';target.appendChild(wrap);if(pendingMaps.length)fillMaps(pendingMaps);
 }
 async function loadModels(){const data=await api('/api/models');state.models=data.models;const sel=$('model-picker');sel.replaceChildren();for(const item of data.models){const opt=node('option','',item.name+(item.configured?'':' · 未配置'));opt.value=item.id;sel.appendChild(opt);}state.model=data.default;sel.value=state.model;updateModelBadge();}
 function updateModelBadge(){const model=state.models.find(x=>x.id===state.model);$('model-badge').textContent=model?.configured?'已配置':'需 API Key';$('model-badge').style.background=model?.configured?'#e9f6ef':'#fff1e5';$('model-badge').style.color=model?.configured?'#23886b':'#a66a35';}
