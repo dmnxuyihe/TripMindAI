@@ -72,14 +72,16 @@ async function loadMapConfig(){
 }
 
 // 高德 JS API：坐标为 GCJ-02，与后端 lat/lon 完全一致，无需纠偏
-const DAY_COLORS=['#168569','#2f6fd0','#c27b1e','#8a4fd0','#b03a48','#1f8a9c','#6b7a1f'];
+// 按天配色：刻意拉开色相与明度差异，保证相邻两天在地图上不会看混
+const DAY_COLORS=['#0e8a63','#2563eb','#ea580c','#9333ea','#db2777','#0891b2','#ca8a04'];
+const DIM_OPACITY=0.15;
 
 // 兼容两种入参：[[spot,...],...] 或 [{spots,legs},...]
 function normalizeDays(input){
   const arr=Array.isArray(input)?input:(input?[input]:[]);
   return arr.map(function(item){
     if(Array.isArray(item))return {spots:item,legs:null};
-    if(item&&Array.isArray(item.spots))return {spots:item.spots,legs:item.legs||null};
+    if(item&&Array.isArray(item.spots))return {spots:item.spots,legs:item.legs||null,day:item.day};
     return null;
   }).filter(function(d){return d&&d.spots&&d.spots.length;});
 }
@@ -92,11 +94,20 @@ function dayPaths(day){
   return [];
 }
 
+function pinHtml(color,number,dimmed){
+  return '<div class="route-pin" style="background:'+color+';opacity:'+(dimmed?'0.3':'1')+'">'
+    +'<span>'+number+'</span></div>';
+}
+
 function drawAmap(host,days,intercity,onAuthFail){
   const map=new AMap.Map(host,{zoom:12,viewMode:'2D',resizeEnable:true});
   const dayLines=days.map(function(){return [];});
   const dayMarkers=days.map(function(){return [];});
+  const dayMeta=days.map(function(day,di){
+    return {color:DAY_COLORS[di%DAY_COLORS.length],markers:[]};
+  });
   const all=[];
+  let seq=0;
 
   days.forEach(function(day,di){
     const color=DAY_COLORS[di%DAY_COLORS.length];
@@ -106,9 +117,11 @@ function drawAmap(host,days,intercity,onAuthFail){
       dayLines[di].push(line); all.push(line);
     });
     (day.spots||[]).forEach(function(s){
+      seq+=1;
       const marker=new AMap.Marker({
         position:[s.lon,s.lat],offset:new AMap.Pixel(-17,-17),title:s.name,
-        content:'<div class="route-pin"><span>'+(all.filter(function(o){return o instanceof AMap.Marker;}).length+1)+'</span></div>'});
+        content:pinHtml(color,seq,false)});
+      marker.__pin={color:color,number:seq};
       dayMarkers[di].push(marker); all.push(marker);
     });
   });
@@ -123,11 +136,21 @@ function drawAmap(host,days,intercity,onAuthFail){
   map.add(all);
   setTimeout(function(){map.setFitView(all.filter(function(o){return o instanceof AMap.Marker;}),false,[40,40,40,40],16);},150);
 
-  // 侧栏切换：只保留选中那天的线，并把视野收拢到当天
+  // 侧栏切换：未选中的天压暗但保留，选中那天的线加粗并聚焦
   host.__focusDay=function(index){
     dayLines.forEach(function(lines,di){
-      if(!lines.length)return;
-      if(index==null||di===index)map.add(lines);else map.remove(lines);
+      const active=(index==null||di===index);
+      lines.forEach(function(line){
+        line.setOptions({strokeOpacity:active?1:DIM_OPACITY,strokeWeight:active?6:3});
+      });
+    });
+    dayMarkers.forEach(function(markers,di){
+      const active=(index==null||di===index);
+      markers.forEach(function(marker){
+        const pin=marker.__pin||{};
+        marker.setContent(pinHtml(pin.color,pin.number,!active));
+        marker.setzIndex(active?200:100);
+      });
     });
     const focus=(index==null)?[].concat.apply([],dayMarkers):(dayMarkers[index]||[]);
     if(focus.length)map.setFitView(focus,false,[40,40,40,40],16);
@@ -149,49 +172,68 @@ function drawLeaflet(host,days,intercity){
   const osm=L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'});
   amap.addTo(map);
   let useWgs=false;
-  const dayGroups=days.map(function(){return L.layerGroup();});
-  const markerGroup=L.layerGroup().addTo(map);
+  const dayLines=days.map(function(){return [];});
+  const dayMarkers=days.map(function(){return [];});
+  let seq=0;
 
   function toLatLng(lonLat){return [lonLat[1],lonLat[0]];}
 
-  function draw(){
-    markerGroup.clearLayers();
+  function build(){
     days.forEach(function(day,di){
-      const group=dayGroups[di];
-      group.clearLayers();
       const color=DAY_COLORS[di%DAY_COLORS.length];
       const spots=day.spots||[];
       if(day.legs&&day.legs.some(function(l){return l&&Array.isArray(l.path)&&l.path.length>1;})){
         day.legs.forEach(function(l){
           if(!l||!Array.isArray(l.path)||l.path.length<2)return;
-          L.polyline(l.path.map(toLatLng),{color:color,weight:5,opacity:0.9,lineJoin:'round'}).addTo(group);
+          dayLines[di].push(L.polyline(l.path.map(toLatLng),
+            {color:color,weight:5,opacity:0.9,lineJoin:'round'}).addTo(map));
         });
       }else if(spots.length>1){
-        L.polyline(spots.map(function(s){return coordOf(s,useWgs);}),
-          {color:color,weight:4,opacity:0.6,lineJoin:'round'}).addTo(group);
+        dayLines[di].push(L.polyline(spots.map(function(s){return coordOf(s,useWgs);}),
+          {color:color,weight:4,opacity:0.6,lineJoin:'round'}).addTo(map));
       }
-      group.addTo(map);
       spots.forEach(function(s){
-        L.marker(coordOf(s,useWgs),{icon:L.divIcon({className:'route-pin',html:'<span>'+(s.__n||'')+'</span>',iconSize:[34,34],iconAnchor:[17,17]})})
-          .bindTooltip(s.name,{direction:'top'}).addTo(markerGroup);
+        seq+=1;
+        const marker=L.marker(coordOf(s,useWgs),{icon:L.divIcon({
+          className:'',html:pinHtml(color,seq,false),iconSize:[34,34],iconAnchor:[17,17]})})
+          .bindTooltip(s.name,{direction:'top'}).addTo(map);
+        marker.__pin={color:color,number:seq};
+        dayMarkers[di].push(marker);
       });
     });
     if(intercity&&intercity.start&&intercity.end){
       const ipath=(Array.isArray(intercity.polyline)&&intercity.polyline.length>1)
         ?intercity.polyline.map(toLatLng)
         :[coordOf(intercity.start,useWgs),coordOf(intercity.end,useWgs)];
-      L.polyline(ipath,{color:'#9aa8a2',weight:3,dashArray:'6 8'}).addTo(markerGroup);
+      L.polyline(ipath,{color:'#9aa8a2',weight:3,dashArray:'6 8'}).addTo(map);
     }
     const allPts=days.reduce(function(acc,d){return acc.concat((d.spots||[]).map(function(s){return coordOf(s,useWgs);}));},[]);
     if(allPts.length)map.fitBounds(L.latLngBounds(allPts).pad(0.18),{maxZoom:15});
   }
 
-  draw();
+  function clearAll(){
+    dayLines.forEach(function(lines){lines.forEach(function(l){map.removeLayer(l);});lines.length=0;});
+    dayMarkers.forEach(function(markers){markers.forEach(function(m){map.removeLayer(m);});markers.length=0;});
+    seq=0;
+  }
+
+  build();
 
   host.__focusDay=function(index){
-    dayGroups.forEach(function(group,di){
-      if(index==null||di===index){if(!map.hasLayer(group))map.addLayer(group);}
-      else if(map.hasLayer(group))map.removeLayer(group);
+    dayLines.forEach(function(lines,di){
+      const active=(index==null||di===index);
+      lines.forEach(function(line){
+        line.setStyle({opacity:active?0.95:DIM_OPACITY,weight:active?6:3});
+      });
+    });
+    dayMarkers.forEach(function(markers,di){
+      const active=(index==null||di===index);
+      markers.forEach(function(marker){
+        const pin=marker.__pin||{};
+        marker.setIcon(L.divIcon({className:'',html:pinHtml(pin.color,pin.number,!active),
+          iconSize:[34,34],iconAnchor:[17,17]}));
+        marker.setZIndexOffset(active?1000:0);
+      });
     });
     const pts=(index==null)
       ?days.reduce(function(acc,d){return acc.concat((d.spots||[]).map(function(s){return coordOf(s,useWgs);}));},[])
@@ -200,7 +242,11 @@ function drawLeaflet(host,days,intercity){
   };
 
   L.control.layers({'高德底图（GCJ-02 原始坐标）':amap,'OSM 底图（已纠偏到 WGS-84）':osm},{},{collapsed:false}).addTo(map);
-  map.on('baselayerchange',function(e){useWgs=/OSM/.test(e.name);draw();});
+  map.on('baselayerchange',function(e){
+    useWgs=/OSM/.test(e.name);
+    clearAll();
+    build();
+  });
   setTimeout(function(){map.invalidateSize();},150);
 }
 
@@ -209,7 +255,6 @@ function buildRouteMap(input,intercity){
   const spots=[].concat.apply([],days.map(function(d){return d.spots;}));
   const valid=spots.length>0&&spots.every(function(s){return s&&s.lat!=null&&s.lon!=null;});
   if(!valid)return routeSvg(spots);
-  spots.forEach(function(s,i){s.__n=i+1;});
   const host=node('div','route-map');
   setTimeout(function(){
     if(window.AMap&&state.mapConfig&&state.mapConfig.provider==='amap-js'){
