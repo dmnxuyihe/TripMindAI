@@ -43,7 +43,7 @@ def discover(db, settings, city, keyword='景点', limit=16, *, amap_client=None
 
 def build_live_plan(db, settings, city, origin, days, interests='', must_visit=None,
                     clustering='kmeans', routing='greedy', *, pace=None, spot_ids=None,
-                    amap_client=None):
+                    day_start=None, amap_client=None):
     if not isinstance(days, int) or isinstance(days, bool) or not 1 <= days <= 7:
         raise ValueError('旅行天数必须是 1～7 天')
     if clustering not in ('kmeans', 'dbscan') or routing not in ('greedy', 'dp'):
@@ -78,7 +78,7 @@ def build_live_plan(db, settings, city, origin, days, interests='', must_visit=N
     unique = list({p['id']: p for p in spots}.values())[:16]
     center = centroid(unique)
     result = make_plan(city, origin, days, clustering, routing, external_spots=unique,
-                       center=center, pace=pace)
+                       center=center, pace=pace, day_start=day_start)
     result['data_source'] = '高德地图 POI 实时接口' if provenance == 'amap_live' else '高德地图 POI 缓存'
     result['amap_source'] = provenance
     result['preferences'] = (interests or '')[:200]

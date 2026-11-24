@@ -107,7 +107,9 @@ def _plan_day(spots, start, end, budget_minutes, max_spots, center=None):
         duration = int(round(hours * 60))
 
         # 午饭：如果这趟游览会跨过中午，就在它之前安排 1 小时午餐
-        if not lunch_done and arrive >= LUNCH_AFTER and arrive + duration > 12 * 60 + 30:
+        # 只在中午前后（11:30–13:30 到达）才安插午饭；下午出发就不插了
+        if (not lunch_done and LUNCH_AFTER <= arrive <= 13 * 60 + 30
+                and arrive + duration > 12 * 60 + 30):
             lunch_at = max(arrive, 12 * 60)
             if lunch_at + LUNCH_MINUTES + duration > end:
                 leftover = spots[index:]

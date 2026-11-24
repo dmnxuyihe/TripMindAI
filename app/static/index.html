@@ -7,7 +7,7 @@
   <title>TripMind AI · 真正的旅行智能体</title>
   <link rel="icon" href="/static/logo.png" />
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
-  <link rel="stylesheet" href="/static/styles.css?v=20261125-52" />
+  <link rel="stylesheet" href="/static/styles.css?v=20261125-53" />
 </head>
 <body>
 <div class="app-shell">
@@ -68,6 +68,7 @@
           <label>出发地<input id="origin" value="上海" maxlength="50" placeholder="例如：北京" /></label>
           <label>目的地<input id="city-picker" maxlength="50" value="苏州市" placeholder="输入任意中国城市，如苏州市" required></label>
           <label>旅行天数<input id="days" type="number" min="1" max="7" value="3" required></label>
+          <label>每天出发时间<input id="day-start" type="time" value="09:00" step="900" required></label>
           <label>旅行节奏<select id="pace-picker">
             <option value="relaxed" selected>休闲 · 每天 3 个景点 / 约 6 小时</option>
             <option value="normal">标准 · 每天 4 个景点 / 约 7.5 小时</option>
@@ -122,6 +123,6 @@
   </div>
 </div>
 <script src="/static/vendor/leaflet/leaflet.js" defer></script>
-<script src="/static/app.js?v=20261125-13" defer></script>
+<script src="/static/app.js?v=20261125-14" defer></script>
 </body>
 </html>
